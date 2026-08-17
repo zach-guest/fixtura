@@ -9,8 +9,11 @@ Formerly called "Pressbox" — renamed 2026-08-16. The name is provisional.
 
 - `index.html` — the entire app. HTML, CSS, and JS in one file, ~1650 lines. No
   build step, no dependencies, no server. Open it in a browser and it runs.
-- `old versions/` — manual snapshots kept before git existed. Historical only;
-  nothing reads from them.
+
+That's the whole project. Before git, versions were kept as hand-saved copies in
+an `old versions/` folder; those 14 snapshots live in the first commit and can be
+recovered with `git checkout 9fb4844 -- 'old versions'` if a lost detail ever
+needs digging up.
 
 ## Running it
 
