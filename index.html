@@ -176,6 +176,8 @@
   .phero img,.phero .ph{width:72px;height:72px;border-radius:50%;object-fit:cover;background:var(--panel-2);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:'Barlow Condensed',sans-serif;font-size:24px;color:var(--dim-2)}
   .phero h2{font-family:'Barlow Condensed',sans-serif;font-size:25px;font-weight:700;line-height:1.1}
   .phero .pmeta{font-family:'Roboto Mono',monospace;font-size:11.5px;color:var(--dim);margin-top:5px;line-height:1.6}
+  .phero .wlink{display:inline-block;margin-top:6px;font-family:'Roboto Mono',monospace;font-size:11px;color:var(--accent);text-decoration:none;border-bottom:1px solid transparent}
+  .phero .wlink:hover,.phero .wlink:focus-visible{border-bottom-color:var(--accent)}
   .bio{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:1px;background:var(--line-soft);border:1px solid var(--line-soft);border-radius:8px;overflow:hidden;margin-top:6px}
   .bio div{background:var(--panel);padding:9px 11px}
   .bio .k{font-family:'Roboto Mono',monospace;font-size:9.5px;letter-spacing:1px;color:var(--dim-2);text-transform:uppercase}
@@ -958,7 +960,17 @@ async function loadTeamRoster(){
 }
 
 /* ========================= PLAYER PROFILE ========================= */
+// Wikipedia's own search, with go=Go: jumps straight to the article when the name is an
+// exact title match, otherwise shows results. Never points at the wrong person.
+function wikiSearchUrl(name){
+  return 'https://en.wikipedia.org/w/index.php?title=Special:Search&go=Go&search='+encodeURIComponent(name);
+}
+function wikiArticleUrl(title){
+  return 'https://en.wikipedia.org/wiki/'+encodeURIComponent(String(title).replace(/ /g,'_'));
+}
 const wikiPhotoCache={};
+// Returns {url,title} — url may be null when the page has no thumbnail, but the title is
+// still worth having for the profile link. Null only when the lookup itself failed.
 async function wikiPhoto(name,hint){
   const key=name+'|'+hint;
   if(wikiPhotoCache[key]!==undefined)return wikiPhotoCache[key];
@@ -966,8 +978,8 @@ async function wikiPhoto(name,hint){
     const s=await get(WIKI+'?action=query&generator=search&gsrsearch='+encodeURIComponent(name+' '+hint)+
       '&gsrlimit=1&prop=pageimages&piprop=thumbnail&pithumbsize=400&format=json&origin=*');
     const pg=s.query&&s.query.pages,k=pg&&Object.keys(pg)[0];
-    const url=(k&&pg[k].thumbnail&&pg[k].thumbnail.source)||null;
-    wikiPhotoCache[key]=url;return url;
+    const hit=k?{url:(pg[k].thumbnail&&pg[k].thumbnail.source)||null,title:pg[k].title||null}:null;
+    wikiPhotoCache[key]=hit;return hit;
   }catch(e){wikiPhotoCache[key]=null;return null;}
 }
 async function openPlayer(id,path){
@@ -988,9 +1000,12 @@ async function openPlayer(id,path){
     // soccer & anyone missing an ESPN headshot: try Wikipedia
     if(!(a.headshot&&(a.headshot.href||a.headshot))){
       const hint=p[0]==='soccer'?'footballer':(a.team?teamName(a.team):p[1]);
-      const url=await wikiPhoto(a.fullName||a.displayName||'',hint);
+      const hit=await wikiPhoto(a.fullName||a.displayName||'',hint);
       const slot=$('#pPhoto');
-      if(url&&slot)slot.outerHTML='<img id="pPhoto" src="'+esc(url)+'" alt="">';
+      if(hit&&hit.url&&slot)slot.outerHTML='<img id="pPhoto" src="'+esc(hit.url)+'" alt="">';
+      // we resolved a real article, so upgrade the search link to point straight at it
+      const wl=$('#pWiki');
+      if(hit&&hit.title&&wl)wl.href=wikiArticleUrl(hit.title);
     }
   }catch(e){$('#playerInner').innerHTML='<div class="mhead"><button class="mclose" onclick="closePlayer()">&times;</button></div><div class="msg err">Couldn\'t load this player.</div>';}
 }
@@ -1009,8 +1024,9 @@ function renderPlayer(a,stats,bio,college){
     ['Jersey',a.jersey?'#'+a.jersey:''],['Status',(a.status&&(a.status.name||a.status.type))||''],['Debut',a.debutYear]].filter(x=>x[1]);
   let html='<div class="mhead"><button class="mclose" onclick="closePlayer()">&times;</button><div class="phero">'+
     (img?'<img id="pPhoto" src="'+esc(img)+'" alt="">':'<div class="ph" id="pPhoto">'+esc(initials(nm))+'</div>')+
-    '<div><h2 class="cond">'+esc(nm)+'</h2><div class="pmeta">'+esc([a.jersey?'#'+a.jersey:'',pos,team].filter(Boolean).join('  \u00b7  '))+
-    '</div></div></div></div><div class="mbody">';
+    '<div><h2 class="cond">'+esc(nm)+'</h2><div class="pmeta">'+esc([a.jersey?'#'+a.jersey:'',pos,team].filter(Boolean).join('  \u00b7  '))+'</div>'+
+    (nm?'<a id="pWiki" class="wlink" target="_blank" rel="noopener noreferrer" href="'+esc(wikiSearchUrl(nm))+'">Wikipedia \u2197</a>':'')+
+    '</div></div></div><div class="mbody">';
   if(f.length)html+='<div class="sublabel">Personal &amp; career details</div><div class="bio">'+
     f.map(x=>'<div><div class="k">'+esc(x[0])+'</div><div class="v">'+esc(x[1])+'</div></div>').join('')+'</div>';
   const th=(bio&&(bio.teamHistory||bio.teams))||[];

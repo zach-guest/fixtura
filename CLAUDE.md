@@ -34,8 +34,10 @@ Open `index.html` in a browser, or serve the folder:
 ruby -run -e httpd . -p 8123
 ```
 
-macOS system `python3` can't run `http.server` under the agent sandbox, hence
-Ruby. Both are fine from a normal terminal.
+Both work from a normal terminal. Under the agent sandbox neither does: system
+`python3` can't call `getcwd` at import, and WEBrick hits the same wall when the
+harness spawns it. Open the file over `file://` to verify instead — the ESPN
+endpoints are CORS-open, so the app works fully from a file URL.
 
 ## Deploying
 
