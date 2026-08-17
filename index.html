@@ -935,11 +935,51 @@ function playerRow(a,path,cls){
   const bits=[a.displayHeight,a.displayWeight,a.age?('Age '+a.age):''].filter(Boolean).join(' \u00b7 ');
   const img=(a.headshot&&(a.headshot.href||a.headshot))||'';
   const nm=a.displayName||a.fullName||'';
+  // no ESPN headshot: tag the placeholder so fillRosterPhotos() can look it up in bulk
+  const lookup=a.fullName||a.displayName||'';
   return '<div class="prow '+(cls||'')+'" data-aid="'+esc(a.id)+'" data-path="'+esc(path)+'">'+
-    (img?'<img src="'+esc(img)+'" alt="">':'<div class="ph">'+esc(initials(nm))+'</div>')+
+    (img?'<img src="'+esc(img)+'" alt="">':'<div class="ph"'+(lookup?' data-nm="'+esc(lookup)+'"':'')+'>'+esc(initials(nm))+'</div>')+
     '<span class="jn">'+esc(a.jersey?'#'+a.jersey:'')+'</span>'+
     '<span class="pn">'+esc(nm)+(pos?' <span style="color:var(--dim-2);font-size:11px">'+esc(pos)+'</span>':'')+'</span>'+
     '<span class="pd">'+esc(bits)+'</span></div>';
+}
+// Bulk headshot lookup for rosters ESPN has no photos for (soccer, mostly).
+// Wikipedia takes up to 50 titles per request, so a whole squad costs one call.
+// A name alone can resolve to the wrong person, so a photo is only accepted when the
+// page's Wikidata description matches the sport. Ambiguous names land on disambiguation
+// pages, which carry no image anyway — those fall back to initials.
+const KIND_DESC={soccer:/footbal|soccer/,football:/football/,basketball:/basketball/,
+  baseball:/baseball/,hockey:/hockey/};
+const wikiRosterCache={};
+async function wikiPhotosFor(names,kind){
+  const want=KIND_DESC[kind],need=[];
+  names.forEach(n=>{if(n&&wikiRosterCache[n]===undefined&&need.indexOf(n)<0)need.push(n);});
+  for(let i=0;i<need.length;i+=50){
+    const chunk=need.slice(i,i+50);
+    try{
+      const d=await get(WIKI+'?action=query&format=json&origin=*&redirects=1&prop=pageimages%7Cpageterms'+
+        '&piprop=thumbnail&pithumbsize=200&wbptterms=description&titles='+encodeURIComponent(chunk.join('|')));
+      const q=d.query||{},alias={},byTitle={};
+      (q.normalized||[]).forEach(x=>{alias[x.from]=x.to;});
+      (q.redirects||[]).forEach(x=>{alias[x.from]=x.to;});
+      const pg=q.pages||{};
+      Object.keys(pg).forEach(k=>{byTitle[pg[k].title]=pg[k];});
+      chunk.forEach(n=>{
+        let t=n;for(let h=0;h<4&&alias[t];h++)t=alias[t];   // requested -> normalized -> redirected
+        const p=byTitle[t],desc=((p&&p.terms&&p.terms.description)||[''])[0].toLowerCase();
+        wikiRosterCache[n]=(p&&p.thumbnail&&(!want||want.test(desc)))?p.thumbnail.source:null;
+      });
+    }catch(e){chunk.forEach(n=>{wikiRosterCache[n]=null;});}
+  }
+}
+async function fillRosterPhotos(kind){
+  const slots=Array.prototype.slice.call(document.querySelectorAll('.prow .ph[data-nm]'));
+  if(!slots.length)return;
+  await wikiPhotosFor(slots.map(s=>s.dataset.nm),kind);
+  slots.forEach(s=>{
+    const u=wikiRosterCache[s.dataset.nm];
+    if(u&&s.parentNode)s.outerHTML='<img src="'+esc(u)+'" alt="" onerror="this.style.visibility=\'hidden\'">';
+  });
 }
 function rosterHTML(list,path,kind){
   const g={};list.forEach(a=>{const k=posGroup(a);(g[k]=g[k]||[]).push(a);});
@@ -956,6 +996,7 @@ async function loadTeamRoster(){
     box.innerHTML=list.length?('<div class="grouplabel">'+list.length+' players &mdash; tap for profile</div>'+rosterHTML(list,L.path,L.kind))
       :'<div class="msg">No roster published.</div>';
     wirePlayers();
+    fillRosterPhotos(L.kind);
   }catch(e){box.innerHTML='<div class="msg err">Couldn\'t load the roster.</div>';}
 }
 
