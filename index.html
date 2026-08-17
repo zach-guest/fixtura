@@ -407,6 +407,16 @@ function initSettings(){
   if(!VIEW_ORDER.length)VIEW_ORDER=DEFAULT_VIEWS.slice();
   const last=store('sb-lastview');
   view=(last&&VIEW_ORDER.indexOf(last)>=0)?last:VIEW_ORDER[0];
+  // ?view=golf&tour=lpga — lets a shared link open on a specific view instead of
+  // whatever the recipient last had open. Beats "open it and click GOLF".
+  try{
+    const p=new URLSearchParams(location.search),qv=p.get('view'),qt=p.get('tour');
+    if(qv&&VIEW_LABELS[qv]){
+      view=qv;
+      if(VIEW_ORDER.indexOf(qv)<0)VIEW_ORDER.unshift(qv);  // don't land on a hidden tab
+    }
+    if(qt&&GOLF_TOURS.some(t=>t[0]===qt))golfTour=qt;
+  }catch(e){}
 }
 function saveViews(){try{store('sb-views',JSON.stringify(VIEW_ORDER));}catch(e){}}
 function saveLastView(){try{store('sb-lastview',view);}catch(e){}}
