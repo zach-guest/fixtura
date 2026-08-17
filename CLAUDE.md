@@ -37,6 +37,20 @@ ruby -run -e httpd . -p 8123
 macOS system `python3` can't run `http.server` under the agent sandbox, hence
 Ruby. Both are fine from a normal terminal.
 
+## Deploying
+
+Live at **https://zach-guest.github.io/fixtura/**, GitHub Pages serving `main`
+from the repo root. There is no build and no CI — pushing to `main` is the
+deploy:
+
+```bash
+git push
+```
+
+The predecessor repo `zach-guest/pressbox` still exists and still serves the old
+Pressbox-branded build at `zach-guest.github.io/pressbox`. It is superseded;
+delete it once nothing points there.
+
 ## Architecture
 
 Section banners in the source (`/* ===== NAME ===== */`) mark the boundaries:
