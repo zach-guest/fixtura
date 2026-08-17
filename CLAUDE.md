@@ -66,7 +66,12 @@ re-render by assigning `innerHTML` and re-wiring handlers.
   top of the `<style>` block: paper (light, default), midnight, ice, terminal,
   crimson. A new colour must be added to all five or one theme breaks. Never
   hardcode a hex outside those blocks. Responsive breakpoint at 700px.
-- **Views** — SCORES, TEAMS, F1, CALENDAR.
+- **Tab row** — data-driven, not hardcoded. `VIEW_LABELS` defines every view that can
+  exist; `VIEW_ORDER` (persisted to `sb-views`) is the visible subset in display order.
+  `renderNav()` builds the row and rewires it. Settings offers up/down reordering and
+  hide/show. Two guards must survive any refactor: the last visible tab cannot be
+  hidden, and hiding the view you are currently on moves you to the first visible one.
+- **Views** — SCORES, TEAMS, F1, GOLF, CALENDAR.
   - *Scores*: league chips plus a LIVE NOW chip that scans `LIVE_SCAN` and
     filters to in-progress games. Day/Week toggle (week uses ESPN's
     `dates=YYYYMMDD-YYYYMMDD` range syntax), date picker, arrow-key nav.
@@ -74,6 +79,12 @@ re-render by assigning `innerHTML` and re-wiring handlers.
     injuries.
   - *F1*: next race with session times, season calendar (click a completed round
     to expand results and qualifying inline), driver and constructor standings.
+  - *Golf*: six tours (`GOLF_TOURS`) — PGA, LPGA, LIV, DP World, Champions, Korn Ferry.
+    Leaderboard for the current or most recent tournament. Golf is a field, not two
+    teams, so it has its own renderer rather than reusing `gameCard()`. ESPN leaves
+    `status.position` empty on finished events, so `golfPositions()` derives ranks from
+    scores and adds the `T` tie prefix. A competitor's `id` *is* the athlete id, so rows
+    open the normal player modal. Rounds show strokes; the total shows to-par.
   - *Calendar*: month grid with favourite teams' logos on days they play.
 - **Game detail modal** — tabs for Box Score, Lineups, Rosters, Injuries, Team
   Stats, Plays, Odds, Venue, Info. Team names in the header navigate to the team
@@ -82,8 +93,11 @@ re-render by assigning `innerHTML` and re-wiring handlers.
   `soc:<espn-code>` entries; `PRIMARY` is the tab row, `DEFAULT_TICKER` the
   ticker, `DEFAULT_TEAMS` the starting favourites.
 - **Persistence** — `localStorage` under `sb-*`: `sb-favs`, `sb-ticker`,
-  `sb-theme`, `sb-teams-<league>` (30-day cache). Keys keep the old `sb-` prefix
+  `sb-theme`, `sb-teams-<league>` (30-day cache), `sb-views` (tab order/visibility),
+  `sb-lastview` (reopens where you left off). Keys keep the old `sb-` prefix
   deliberately so a rename never wipes saved teams. Don't "tidy" them.
+  Every write goes through `store()`, which swallows failures — localStorage is
+  disabled entirely under `data:`/`file:` in some previews, and the app must still run.
 - **Refresh** — clock every 30s; scores and ticker every 60s.
 
 ## Data sources
