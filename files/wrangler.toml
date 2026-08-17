@@ -1,0 +1,10 @@
+name = "pressbox-api"
+main = "worker.js"
+compatibility_date = "2026-08-01"
+
+# Secrets are NOT set here — they'd end up in git. Set them with:
+#   wrangler secret put ODDS_API_KEY
+#
+# After `wrangler deploy` you'll get a URL like:
+#   https://pressbox-api.YOURSUBDOMAIN.workers.dev
+# That's the value you put in PROXY in the frontend.
