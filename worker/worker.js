@@ -1,5 +1,5 @@
 /**
- * Pressbox API proxy — Cloudflare Worker
+ * Fixtura API proxy — Cloudflare Worker
  *
  * Why this exists:
  *   1. Keeps API keys server-side. A key in a public GitHub Pages file is a public key.
@@ -103,7 +103,7 @@ export default {
     if (hit) {
       const h = new Headers(hit.headers);
       Object.entries(cors).forEach(([k, v]) => h.set(k, v));
-      h.set('X-Pressbox-Cache', 'HIT');
+      h.set('X-Fixtura-Cache', 'HIT');
       return new Response(hit.body, { status: hit.status, headers: h });
     }
 
@@ -112,7 +112,7 @@ export default {
       upstreamRes = await fetch(upstream.toString(), {
         headers: {
           // Be a good citizen: identify the app rather than pretending to be a browser.
-          'User-Agent': 'Pressbox/1.0 (personal sports dashboard)',
+          'User-Agent': 'Fixtura/1.0 (personal sports dashboard)',
           'Accept': 'application/json',
         },
         cf: { cacheTtl: route.ttl, cacheEverything: true },
@@ -125,7 +125,7 @@ export default {
     const headers = new Headers({
       'Content-Type': upstreamRes.headers.get('Content-Type') || 'application/json',
       'Cache-Control': 'public, max-age=' + route.ttl,
-      'X-Pressbox-Cache': 'MISS',
+      'X-Fixtura-Cache': 'MISS',
       ...cors,
     });
 
