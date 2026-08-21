@@ -450,7 +450,7 @@ const BAD_IMG=/logo|icon|map\b|flag|crest|badge|commons|wiki|symbol|coat|arms|po
 let view='scores',league='nfl',socMode='club',socFilter='all',dateObj=new Date(),weekMode=false,liveMode=false;
 let VIEW_ORDER=[],golfTour='pga',golfTab='board',golfOpen=null,golfData=null;
 let activeTeam=null,teamTab='schedule',showAllGames=false,teamCache={},schedCache={};
-let searchScope='all',allLeaguesLoading=false;
+let searchScope='all',allLeaguesLoading=false,allLeaguesDone=false;
 let modalData=null,modalTab='box',boxTeam=0,boxFilter='all',rosterTeam=0,lineupTeam=0,driveOpen=-1;
 let gameRosters=null,venueHTML=null,autoRefresh=true,showCfg=false;
 let MY_TEAMS=[],FAV_NAMES=[],TICKER_LEAGUES=[];
@@ -856,7 +856,9 @@ function renderTeamsShell(){
   $('#brLeague').onchange=()=>{searchScope=$('#brLeague').value;$('#hits').innerHTML='';loadTeamList();};
   $('#brSearch').oninput=()=>runSearch();
   loadTeamList();
-  if(!allLeaguesLoading){allLeaguesLoading=true;loadAllLeagues();}
+  // in-flight and finished are different states: one blocks a second run, the other stops
+  // it being started again on every re-render of this tab
+  if(!allLeaguesLoading&&!allLeaguesDone){allLeaguesLoading=true;loadAllLeagues();}
   if(activeTeam)loadTeam();else $('#teamBody').innerHTML='<div class="msg">Pick a team for schedule, roster, and player profiles.</div>';
 }
 const SEARCH_LEAGUES=['nfl','ncaaf','nba','wnba','ncaam','ncaaw','mlb','nhl',
@@ -943,15 +945,24 @@ async function loadTeamList(force){
   if($('#tlRetry'))$('#tlRetry').onclick=()=>loadTeamList(true);
   runSearch();
 }
+/* Runs for a while \u2014 fifteen league lists, some of which fall back to the paginated core
+   API. Leaving the Teams tab and coming back rebuilds the shell, so the note element must
+   be looked up each pass rather than captured once: the captured node is detached by then
+   and every progress message goes into a node that is no longer in the document. The
+   in-flight flag has to be released too, or a run interrupted by a failure leaves search
+   permanently showing "loading" with no way to retry. */
 async function loadAllLeagues(){
-  const note=$('#brNote');
-  for(let i=0;i<SEARCH_LEAGUES.length;i++){
-    const k=SEARCH_LEAGUES[i];
-    if(note)note.textContent='loading '+LEAGUES[k].label+' ('+(i+1)+'/'+SEARCH_LEAGUES.length+')\u2026';
-    await ensureTeams(k);
-    if($('#brLeague')&&$('#brLeague').value==='all')runSearch(true);
-  }
-  if(note)note.innerHTML='all leagues ready';
+  const note=()=>$('#brNote');
+  try{
+    for(let i=0;i<SEARCH_LEAGUES.length;i++){
+      const k=SEARCH_LEAGUES[i],n=note();
+      if(n)n.textContent='loading '+LEAGUES[k].label+' ('+(i+1)+'/'+SEARCH_LEAGUES.length+')\u2026';
+      await ensureTeams(k);
+      if($('#brLeague')&&$('#brLeague').value==='all')runSearch(true);
+    }
+    allLeaguesDone=true;
+    const n=note();if(n)n.textContent='all leagues ready';
+  }finally{allLeaguesLoading=false;}
 }
 function runSearch(quiet){
   const inp=$('#brSearch');if(!inp)return;
