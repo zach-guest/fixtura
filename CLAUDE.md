@@ -75,6 +75,29 @@ The predecessor repo `zach-guest/pressbox` still exists and still serves the old
 Pressbox-branded build at `zach-guest.github.io/pressbox`. It is superseded;
 delete it once nothing points there.
 
+### Deploying is instant; the client is not
+
+Pushing updates the site immediately, but a user can sit on an old build for a long
+time, which looks exactly like "the feature didn't ship":
+
+- GitHub Pages sends `cache-control: max-age=600`, so a tab already open keeps the
+  old file for ten minutes.
+- Zach runs Fixtura as a Safari **"Add to Dock" web app** on the Mac
+  (`~/Applications/Fixtura.app`, a template bundle whose `Manifest.start_url` is
+  `https://zach-guest.github.io/fixtura/`). It **suspends instead of reloading**, so
+  it can serve a build from days earlier. Closing the window is not enough — Cmd+Q,
+  or Cmd+R inside the window.
+
+`checkForUpdate()` handles this in-app: it HEADs the page's own URL and watches the
+`ETag`. Same-origin, so the header is readable; HEAD, so there's no body to download.
+It runs on load, every 10 minutes, and **on focus / visibilitychange** — the focus
+case is the important one, since that's exactly when a suspended web app resumes. A
+changed ETag raises a "new version available" banner. Settings shows the served
+build's `Last-Modified` so "am I on the latest?" is answerable directly.
+
+A service worker would be the textbook fix and is deliberately not used: it needs a
+second same-origin file and would break the single-file constraint.
+
 ## Architecture
 
 Section banners in the source (`/* ===== NAME ===== */`) mark the boundaries:
