@@ -172,6 +172,15 @@
   .play.score .txt{color:var(--text)}
   .play .pts{font-family:'Roboto Mono',monospace;font-size:10.5px;color:var(--accent);margin-left:6px}
   /* --- golf: course header, scorecard, hole difficulty --- */
+  .gtabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:14px;overflow-x:auto}
+  .gtabs button{background:none;border:0;color:var(--dim);font-size:12.5px;font-weight:600;
+        padding:9px 14px;border-bottom:2px solid transparent;white-space:nowrap;cursor:pointer}
+  .gtabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
+  .gtabs button:hover{color:var(--text)}
+  /* rows expand; say so rather than making people guess */
+  .gcar{display:inline-block;width:9px;margin-right:7px;color:var(--dim-2);
+        transition:transform .15s ease;transform-origin:50% 50%}
+  tr.gopen .gcar{transform:rotate(90deg);color:var(--accent)}
   .ghead{border:1px solid var(--line-soft);border-radius:8px;background:var(--panel-2);padding:11px 13px;margin-bottom:14px;
         display:flex;flex-wrap:wrap;gap:6px 22px;align-items:baseline}
   .ghead .gitem{font-family:'Roboto Mono',monospace;font-size:10.5px;color:var(--dim-2);letter-spacing:.4px}
@@ -2393,8 +2402,8 @@ function drawGolf(){
   }
 
   const tabs=[['board','Leaderboard'],['course','Course'],['today','Today']];
-  html+='<div class="chips" style="margin-bottom:12px">'+
-    tabs.map(t=>'<button class="chip '+(golfTab===t[0]?'on':'')+'" data-gsec="'+t[0]+'">'+t[1]+'</button>').join('')+'</div>';
+  html+='<div class="gtabs">'+
+    tabs.map(t=>'<button class="'+(golfTab===t[0]?'on':'')+'" data-gsec="'+t[0]+'">'+t[1]+'</button>').join('')+'</div>';
 
   if(!cs.length)html+='<div class="msg">Field not published yet.</div>';
   else if(golfTab==='course')html+=golfCourseHTML(cs,pars);
@@ -2418,7 +2427,8 @@ function golfBoardHTML(cs,pars){
   const rounds=activeRounds(cs);
   const pos=golfPositions(cs);
   const hasPars=Object.keys(pars).length>0,hasHole=hasHoleData(cs);
-  return '<div class="tscroll"><table class="st"><thead><tr><th>Pos</th><th style="text-align:left">Player</th>'+
+  return '<div class="sublabel">Tap a player for their scorecard and round stats</div>'+
+    '<div class="tscroll"><table class="st"><thead><tr><th>Pos</th><th style="text-align:left">Player</th>'+
     '<th>Total</th><th>Thru</th>'+Array.from({length:rounds},(_,i)=>'<th>R'+(i+1)+'</th>').join('')+
     '</tr></thead><tbody>'+cs.map((c,ci)=>{
       const a=c.athlete||{},ls=c.linescores||[];
@@ -2427,9 +2437,9 @@ function golfBoardHTML(cs,pars){
       const th=golfThru(c);
       const thru=!th?'':(th.holes===0?'—':th.holes>=18?'F':String(th.holes));
       const open=golfOpen===String(c.id);
-      let row='<tr'+(c.id?' data-gid="'+esc(c.id)+'" style="cursor:pointer"':'')+'>'+
+      let row='<tr'+(c.id?' data-gid="'+esc(c.id)+'" class="'+(open?'gopen':'')+'" style="cursor:pointer"':'')+'>'+
         '<td>'+esc(pos[ci])+'</td>'+
-        '<td style="text-align:left">'+(flag?'<img src="'+esc(flag)+'" alt="" style="width:14px;height:10px;object-fit:cover;margin-right:6px;vertical-align:middle" onerror="this.style.display=\'none\'">':'')+
+        '<td style="text-align:left"><span class="gcar">\u203a</span>'+(flag?'<img src="'+esc(flag)+'" alt="" style="width:14px;height:10px;object-fit:cover;margin-right:6px;vertical-align:middle" onerror="this.style.display=\'none\'">':'')+
           esc(a.displayName||a.fullName||'')+'</td>'+
         '<td style="color:var(--accent);font-weight:600">'+esc(sc)+'</td>'+
         '<td style="color:var(--dim-2);font-family:\'Roboto Mono\',monospace;font-size:10.5px">'+esc(thru)+'</td>'+

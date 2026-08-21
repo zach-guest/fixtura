@@ -118,6 +118,11 @@ re-render by assigning `innerHTML` and re-wiring handlers.
       position now against position through the previous round.
     Refreshes every 60s via the global timer (previously scores-only), keeping the
     sub-tab, the expanded player and scroll position.
+    The sub-tabs use `.gtabs` (the app's underlined tab-row style), **not** `.chip` —
+    they shipped as chips first and were invisible, reading as more tour filters
+    sitting under the real ones. A row of tabs and a row of filter chips are
+    different controls and must not look alike. Leaderboard rows carry a `.gcar`
+    chevron and a one-line hint because nothing else signals that they expand.
   - *Calendar*: month grid with favourite teams' logos on days they play.
 - **Drive view** (football only) — a `Drive` tab in the game modal: a
   hover-readable win-probability chart, an animated 100-yard field with
