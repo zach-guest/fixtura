@@ -2,9 +2,24 @@ name = "fixtura-api"
 main = "worker.js"
 compatibility_date = "2026-08-01"
 
+# The D1 binding. `database_id` is not a secret — it is useless without an
+# authenticated account — so it is fine in git.
+[[d1_databases]]
+binding = "DB"                                    # available in the Worker as env.DB
+database_name = "fixtura"
+database_id = "8174e0fb-8d36-43e7-bfbf-bbb1cc94244f"
+
 # Secrets are NOT set here — they'd end up in git. Set them with:
-#   wrangler secret put ODDS_API_KEY
+#   npx wrangler secret put GOOGLE_CLIENT_SECRET
+#   npx wrangler secret put ODDS_API_KEY          # only if/when a keyed provider lands
 #
-# After `wrangler deploy` you'll get a URL like:
+# Non-secret config can live here:
+# [vars]
+# GOOGLE_CLIENT_ID = "....apps.googleusercontent.com"
+#
+# After `npx wrangler deploy` you'll get a URL like:
 #   https://fixtura-api.YOURSUBDOMAIN.workers.dev
-# That's the value you put in PROXY in the frontend.
+# That's the value the frontend points API at.
+#
+# Schema:  npx wrangler d1 execute fixtura --remote --file=schema.sql
+# Console: npx wrangler d1 execute fixtura --remote --command "SELECT * FROM users"
