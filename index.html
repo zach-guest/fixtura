@@ -2275,16 +2275,25 @@ function golfPositions(cs){
    the site scoreboard the leaderboard comes from. `courses[0].holes[]` carries par
    and yardage per hole — real geometry, so hole difficulty needs no third-party
    course data. Cached per event: it changes at most once a round. */
-let golfCourse=null,golfCourseFor=null;
+/* Par and yardage never move mid-tournament, but the weather on this record is live, so
+   the cache has to expire or the header shows the wind from whenever the tab was opened.
+   10 minutes: slow enough that the 60s refresh is a no-op on five ticks out of six. */
+const GOLF_COURSE_TTL=600000;
+let golfCourse=null,golfCourseFor=null,golfCourseAt=0;
 async function ensureGolfCourse(evId){
-  if(golfCourseFor===evId)return golfCourse;
+  if(golfCourseFor===evId&&Date.now()-golfCourseAt<GOLF_COURSE_TTL)return golfCourse;
   try{
     const d=await get(CORE+'/sports/golf/leagues/'+golfTour+'/events/'+evId);
     golfCourse={course:(d.courses||[])[0]||null,purse:d.displayPurse||'',
       champ:(d.defendingChampion&&d.defendingChampion.athlete&&d.defendingChampion.athlete.displayName)||'',
       playoff:!!d.isCupPlayoff};
-  }catch(e){golfCourse=null;}                 // header detail is a bonus, never a blocker
-  golfCourseFor=evId;
+  }catch(e){
+    // Header detail is a bonus, never a blocker — but now that this refetches, a dropped
+    // poll must not blank a card we already hold: par and yardage are still right, only
+    // the weather has gone stale. Discard only when there's nothing for this event yet.
+    if(golfCourseFor!==evId)golfCourse=null;
+  }
+  golfCourseFor=evId;golfCourseAt=Date.now();
   return golfCourse;
 }
 // par per hole, keyed by hole number
@@ -2413,8 +2422,9 @@ async function renderGolf(){
 }
 
 /* Re-pull the leaderboard in place. Keeps the sub-tab, the expanded player and the
-   scroll position, so a refresh mid-tournament doesn't yank the view around. The
-   course card is cached separately and doesn't need re-fetching. */
+   scroll position, so a refresh mid-tournament doesn't yank the view around. The course
+   card comes along too — it is TTL-gated, so it costs a request every 10 minutes, not
+   every tick, and that is what keeps the wind reading live rather than frozen at open. */
 async function refreshGolf(){
   if(view!=='golf'||!golfData)return;
   let d;
@@ -2424,6 +2434,7 @@ async function refreshGolf(){
   if(!ev)return;
   const y=window.scrollY,open=golfOpen;
   golfData=ev;
+  await ensureGolfCourse(ev.id);        // cheap: TTL-gated, so this is a no-op most ticks
   drawGolf();
   window.scrollTo(0,y);
   if(open)loadGolfStats(open);
