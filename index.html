@@ -2692,9 +2692,13 @@ clock();setInterval(clock,30000);
 initSettings();
 renderNav();
 render();loadTicker();stamp();
+// The ticker sits above the tab row, so it is on screen on every view — refresh it
+// regardless of which one is open. It used to be inside the scores branch, which left
+// a bar labelled LIVE showing whatever the scores were when the app was opened.
 setInterval(()=>{
   if(!autoRefresh||modalOpen())return;
-  if(view==='scores'){loadScores();loadTicker();return;}
+  loadTicker();
+  if(view==='scores'){loadScores();return;}
   if(view==='golf')refreshGolf();
 },60000);
 </script>
