@@ -102,11 +102,22 @@ re-render by assigning `innerHTML` and re-wiring handlers.
   - *F1*: next race with session times, season calendar (click a completed round
     to expand results and qualifying inline), driver and constructor standings.
   - *Golf*: six tours (`GOLF_TOURS`) — PGA, LPGA, LIV, DP World, Champions, Korn Ferry.
-    Leaderboard for the current or most recent tournament. Golf is a field, not two
-    teams, so it has its own renderer rather than reusing `gameCard()`. ESPN leaves
-    `status.position` empty on finished events, so `golfPositions()` derives ranks from
-    scores and adds the `T` tie prefix. A competitor's `id` *is* the athlete id, so rows
-    open the normal player modal. Rounds show strokes; the total shows to-par.
+    Golf is a field, not two teams, so it has its own renderer rather than reusing
+    `gameCard()`. ESPN leaves `status.position` empty on finished events, so
+    `golfPositions()` derives ranks from scores and adds the `T` tie prefix. A
+    competitor's `id` *is* the athlete id, so rows open the normal player modal.
+    Three sub-tabs, all built from free ESPN data:
+    - *Leaderboard* — position, total, `thru`, per-round. Rows expand in place to a
+      hole-by-hole scorecard colour-coded against par, plus that round's stats
+      (driving distance, fairways, GIR, putts/GIR, sand saves) lazily fetched from
+      `playersummary` on expand rather than 50x up front.
+    - *Course* — field-wide hole difficulty: average strokes over par per hole across
+      everyone who has posted it, with par, yardage and a diverging bar. Real derived
+      analytics from free data; no modelling and nothing inferred.
+    - *Today* — best completed round, and who is climbing or sliding, comparing
+      position now against position through the previous round.
+    Refreshes every 60s via the global timer (previously scores-only), keeping the
+    sub-tab, the expanded player and scroll position.
   - *Calendar*: month grid with favourite teams' logos on days they play.
 - **Drive view** (football only) — a `Drive` tab in the game modal: a
   hover-readable win-probability chart, an animated 100-yard field with
@@ -148,6 +159,35 @@ re-render by assigning `innerHTML` and re-wiring handlers.
   Every write goes through `store()`, which swallows failures — localStorage is
   disabled entirely under `data:`/`file:` in some previews, and the app must still run.
 - **Refresh** — clock every 30s; scores and ticker every 60s.
+
+### Golf data — what ESPN does and doesn't have
+
+Checked against a live tournament, 2026-08-21.
+
+- **No shot-level data, at all.** `playByPlayAvailable` and `shotChartAvailable` are
+  both `false` for golf. Shot coordinates come from ShotLink, which PGA Tour licenses
+  to enterprises; there is no free or cheap route to it. **Do not "work around" this
+  by modelling shot positions from hole scores** — a hole score is one number and the
+  set of shot sequences producing it is enormous, so any such map is invented, not
+  inferred. It would also destroy the app's credibility with exactly the people who
+  care, since the broadcast shows where the ball actually is.
+- **The core API has much more than the site scoreboard.**
+  `sports.core.api.espn.com/v2/sports/golf/leagues/{tour}/events/{id}` carries the full
+  course card (`courses[0].holes[]` with `shotsToPar` and `totalYards` per hole),
+  **live weather at the course** (wind speed/direction/gusts, temp, precip), purse,
+  defending champion, and `isCupPlayoff`. Cached per event in `ensureGolfCourse()`.
+- **Par is not on the scoreboard.** Hole scores are, par isn't — it comes from the
+  course card. Hole difficulty needs both.
+- **Hole-by-hole scoring only exists on some tours.** PGA and Korn Ferry publish it;
+  DP World, LPGA, LIV and Champions publish round totals only. `hasHoleData()` gates
+  the scorecard and difficulty table, and the Course tab falls back to a plain course
+  card. Never assume `linescores[].linescores[]` is populated.
+- **`playersummary` is richer than the leaderboard** — 26 per-player stats including
+  driving distance, driving accuracy %, GIR, putts per GIR and sand saves, plus par
+  per hole. This covers most of what a paid provider would be bought for; the genuinely
+  exclusive paid data is strokes-gained by category and proximity.
+  `site.web.api.espn.com/apis/site/v2/sports/golf/{tour}/leaderboard/{event}/playersummary?player={id}`
+  — the `season` param the community docs mention is optional.
 
 ## Data sources
 
@@ -290,6 +330,27 @@ Each was a real bug found in testing. All are non-obvious and easy to reintroduc
     — the collision here was silent, since the field-scoped CSS rule still matched
     only the right element while `document.querySelector('.fbar')` returned the
     footer.
+
+13. **Golf: ESPN pads the round list.** A tournament in round 2 reports *three*
+    `linescores` entries, the third empty. Counting rounds off `linescores.length`
+    double-counts a round nobody has played, which breaks `thru`, the round columns
+    and the movers comparison. Use `activeRounds()`.
+
+14. **Golf: never rank by cumulative strokes.** Mid-round, a player three holes in has
+    more strokes than one who hasn't teed off, so ranking by strokes buries everyone
+    currently on the course — the first version of the movers table showed the joint
+    leader as having dropped 41 places. Rank by score **to par** (`toPar()` parses
+    `E` / `-5` / `+2`), and make it tie-aware.
+
+15. **Golf: a round in progress reports running strokes.** `linescores[i].value` is
+    10 after three holes, which reads as a score. Show `displayValue` (to par) until
+    the round is complete, and derive `thru` from posted holes since ESPN has no
+    `thru` on the scoreboard.
+
+16. **A wide element inside a `colspan` cell stretches the whole table.** The expanded
+    scorecard forced the leaderboard's Pos column to 177px and pushed Total/Thru off
+    screen, because a table's min-content width includes its widest cell. `.gwrap` is
+    capped with `max-width:calc(100vw - 44px)` and scrolls internally.
 
 ## Known limitations
 
