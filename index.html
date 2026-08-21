@@ -627,17 +627,39 @@ function cfgHTML(){
       '<span id="buildInfo" style="font-family:\'Roboto Mono\',monospace;font-size:11px;color:var(--dim)">checking\u2026</span>'+
       '<button class="chip sm" id="buildReload">Reload now</button></div></div>';
 }
-/* Served build date, so "am I actually on the latest?" is answerable without guessing.
-   There's no build step to stamp a version into, so read the file's Last-Modified. */
+/* "Which build am I running?" and "which build is deployed?" are different questions, and
+   only the second one is a network call. HEADing our own URL answers the second; the first
+   is `document.lastModified`, which reflects the Last-Modified header of the document that
+   actually loaded. Asking only the server — which this used to do — reports the deploy time
+   and calls it your version, so a stale client is told the *new* date and reads as current,
+   which is the one case the panel exists to catch. */
+const BUILD_SKEW_MS=2000;                    // document.lastModified is second-resolution
+function runningBuild(){
+  const t=Date.parse(document.lastModified);
+  return isNaN(t)?null:t;
+}
+async function headSelf(){
+  const r=await fetch(location.pathname+'?_v='+Date.now(),{method:'HEAD',cache:'no-store'});
+  if(!r.ok)return null;
+  return {tag:r.headers.get('etag')||r.headers.get('last-modified'),lm:r.headers.get('last-modified')};
+}
+/* True only when the deployed copy is genuinely newer than the loaded one. Both guards
+   matter: with no Last-Modified header document.lastModified defaults to "now", which must
+   not read as permanently stale, and second-resolution timestamps need the skew allowance. */
+function staleAgainst(lm){
+  const mine=runningBuild(),theirs=lm?Date.parse(lm):NaN;
+  if(mine===null||isNaN(theirs))return false;
+  return theirs-mine>BUILD_SKEW_MS;
+}
 async function showBuildInfo(){
   const el=$('#buildInfo');
   if(!el)return;
   if(!/^https?:$/.test(location.protocol)){el.textContent='running from a local file';return;}
   try{
-    const r=await fetch(location.pathname+'?_v='+Date.now(),{method:'HEAD',cache:'no-store'});
-    const lm=r.headers.get('last-modified');
-    el.textContent=lm?'deployed '+new Date(lm).toLocaleString('en-US',
-      {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'unknown';
+    const h=await headSelf();
+    if(!h||!h.lm){el.textContent='unknown';return;}
+    const when=new Date(h.lm).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+    el.textContent=staleAgainst(h.lm)?('stale — '+when+' is live, reload'):('current — deployed '+when);
   }catch(e){el.textContent='offline';}
 }
 function wireCfg(){
@@ -2658,19 +2680,21 @@ document.addEventListener('keydown',e=>{
    Instead: HEAD our own URL and watch the ETag. Same-origin, so the header is
    readable; HEAD, so it costs no body. Checking on focus is the important one —
    that's exactly when a suspended web app comes back up. */
-let buildTag=null,updateShown=false;
+let buildTag=null,latestTag=null,dismissedTag=null,updateShown=false;
 async function checkForUpdate(){
   if(!/^https?:$/.test(location.protocol))return;      // no-op on file://
   if(updateShown)return;
-  let tag;
-  try{
-    const r=await fetch(location.pathname+'?_v='+Date.now(),{method:'HEAD',cache:'no-store'});
-    if(!r.ok)return;
-    tag=r.headers.get('etag')||r.headers.get('last-modified');
-  }catch(e){return;}                                   // offline is not an error worth showing
-  if(!tag)return;
-  if(buildTag===null){buildTag=tag;return;}            // first run just records the baseline
-  if(tag!==buildTag){
+  let h;
+  try{h=await headSelf();}
+  catch(e){return;}                                    // offline is not an error worth showing
+  if(!h||!h.tag)return;
+  latestTag=h.tag;
+  if(h.tag===dismissedTag)return;                      // already said no to this exact build
+  // An ETag baseline can only catch a deploy that lands *after* this point, so on the first
+  // run compare timestamps as well: the document may already be stale, having been served
+  // from the 10-minute Pages cache moments after a deploy.
+  if(buildTag===null)buildTag=h.tag;
+  if(h.tag!==buildTag||staleAgainst(h.lm)){
     updateShown=true;
     const b=$('#updBanner');
     if(b)b.classList.add('show');
@@ -2681,7 +2705,9 @@ async function checkForUpdate(){
   if(!b)return;
   const rl=$('#updReload'),x=$('#updDismiss');
   if(rl)rl.onclick=()=>location.reload();
-  if(x)x.onclick=()=>{b.classList.remove('show');updateShown=false;buildTag=null;};
+  // Dismiss means "not this build". Clearing the baseline instead would let the timestamp
+  // check re-raise the banner on the very next tick, since the loaded document is still old.
+  if(x)x.onclick=()=>{b.classList.remove('show');updateShown=false;dismissedTag=latestTag;};
   checkForUpdate();
   setInterval(checkForUpdate,600000);                  // matches the Pages max-age
   window.addEventListener('focus',checkForUpdate);
