@@ -18,9 +18,12 @@ deploy is a feature, not an accident.
 
 ## Layout
 
-- `index.html` — the entire app, ~1,650 lines.
+- `index.html` — the entire app, ~2,700 lines. (Re-check with `wc -l` when you edit
+  this line; it has been wrong by a thousand lines before.)
 - `worker/` — a Cloudflare Worker API proxy. **Written but never deployed.** The
-  frontend does not reference it. See "Open decisions" below.
+  frontend does not reference it. See `DECISIONS.md`.
+- `DECISIONS.md` — what was decided and what is planned. Not needed for ordinary
+  changes; read it before touching the accounts/betting track.
 
 Before git, versions were hand-saved copies in `old versions/`; those 14
 snapshots and the original `HANDOFF.md` this file draws from live in history
@@ -39,9 +42,26 @@ Both work from a normal terminal. Under the agent sandbox neither does: system
 harness spawns it. Open the file over `file://` to verify instead — the ESPN
 endpoints are CORS-open, so the app works fully from a file URL.
 
-**Verifying a change under the agent.** There is no `node` on this machine, so
-there's no CLI syntax check — load the file in the browser pane and read the
-console instead. The pane **serves a cached snapshot**: injected state is dropped
+`python3` itself is usable for scripting despite the above — the `getcwd` failure
+depends on the working directory, and `cd / && python3 -c '...'` runs fine. Useful
+for one-off analysis (decoding the inline icon, parsing a PNG) where there's no
+Node package to hand.
+
+**Syntax-check every edit. It takes a second.** Node v24 is installed at
+`/usr/local/bin/node`, so the script block can be extracted and parsed without a
+build step:
+
+```bash
+awk 'f{if(/^<\/script>/){f=0;next}print} /^<script>/{f=1}' index.html > /tmp/app.js
+node --check /tmp/app.js
+```
+
+This catches the class of mistake that is otherwise only found by loading the page
+and noticing the whole app is blank. It proves nothing about behaviour — do that
+below — but there is no excuse for shipping a parse error.
+
+**Verifying behaviour under the agent.** The browser pane **serves a cached
+snapshot**: injected state is dropped
 between a `javascript_exec` and a later `screenshot`, so a screenshot can show a
 stale render and quietly mislead you. Do assertions **programmatically** in a
 single `javascript_exec` that sets up state and returns its own findings, and
@@ -92,8 +112,19 @@ time, which looks exactly like "the feature didn't ship":
 `ETag`. Same-origin, so the header is readable; HEAD, so there's no body to download.
 It runs on load, every 10 minutes, and **on focus / visibilitychange** — the focus
 case is the important one, since that's exactly when a suspended web app resumes. A
-changed ETag raises a "new version available" banner. Settings shows the served
-build's `Last-Modified` so "am I on the latest?" is answerable directly.
+changed ETag raises a "new version available" banner.
+
+**The server's `Last-Modified` is the deploy time, not your version.** Asking only
+the server cannot answer "am I stale?", and both this banner and the Settings panel
+used to get that wrong — a stale client was shown the *new* deploy date and read as
+current. `document.lastModified` is the missing half: it carries the `Last-Modified`
+of the document that actually loaded, so comparing the two is a real staleness check,
+and one that works on the very first run. An ETag baseline can't do that — it only
+catches a deploy landing *after* the page loaded, so a page served from the 10-minute
+Pages cache moments after a deploy recorded the new tag as its baseline and stayed
+silent. Two guards in `staleAgainst()` are load-bearing: with no `Last-Modified`
+header `document.lastModified` defaults to *now*, which must not read as permanently
+stale, and second-resolution timestamps need a small skew allowance.
 
 A service worker would be the textbook fix and is deliberately not used: it needs a
 second same-origin file and would break the single-file constraint.
@@ -186,7 +217,12 @@ re-render by assigning `innerHTML` and re-wiring handlers.
   deliberately so a rename never wipes saved teams. Don't "tidy" them.
   Every write goes through `store()`, which swallows failures — localStorage is
   disabled entirely under `data:`/`file:` in some previews, and the app must still run.
-- **Refresh** — clock every 30s; scores and ticker every 60s.
+- **Refresh** — clock every 30s; one 60s timer for everything else. The ticker
+  refreshes on **every** view, because it sits above the tab row and is always on
+  screen; scores and golf refresh only when their view is the open one. Keep the
+  ticker call outside the per-view branches — it lived inside the scores branch for
+  a while, which left a bar labelled LIVE frozen at whatever the scores were when
+  the app was opened.
 
 ### Golf data — what ESPN does and doesn't have
 
@@ -380,6 +416,15 @@ Each was a real bug found in testing. All are non-obvious and easy to reintroduc
     screen, because a table's min-content width includes its widest cell. `.gwrap` is
     capped with `max-width:calc(100vw - 44px)` and scrolls internally.
 
+17. **Every string rendered into HTML goes through `esc()`.** This is currently true
+    everywhere and must stay true. The app has one flat namespace, no templating and
+    ~76 `innerHTML=` assignments built by string concatenation, so the only thing
+    standing between it and injection is the habit. It has cost nothing so far
+    because every string came from ESPN — but the D1 schema introduces `pools.name`
+    and `users.name`, which are the first genuinely attacker-controlled text this app
+    will render, into a leaderboard *other people* see. Use `esc()` without exception,
+    and prefer `textContent` when writing a bare name into an existing node.
+
 ## Known limitations
 
 - **Soccer player headshots are sparse.** ESPN doesn't license them for most
@@ -390,98 +435,12 @@ Each was a real bug found in testing. All are non-obvious and easy to reintroduc
 - **No multi-user anything.** Favourites are localStorage, per-device.
 - **Betting data is limited** to whatever ESPN's `pickcenter` returns.
 
-## Open decisions
+## Open decisions and roadmap
 
-1. **Data provider — ESPN stays, and covers more than was assumed.** A 2026-08
-   evaluation went looking for EPA and win probability elsewhere, then found ESPN
-   already serves live per-play **win probability** for free (see Data sources).
-   The Drive view is built on it. Two conclusions worth keeping:
-
-   - **ESPN has win probability but NOT EPA.** These are two different things and
-     the planning docs conflated them. Live WP: already have it. EPA: post-game
-     only, nflverse-derived, needs a second provider.
-   - **Big Balls Sports Data** (`bigballsdata.com`) was the evaluated candidate.
-     Real service, but its NFL play-by-play with EPA is **written after the game
-     ends** ("not a live in-game feed", refreshed weekly after MNF) — it cannot
-     power anything live. Free tier is 1,000 req/day (2,000 via GitHub) and
-     current + most-recent season only; its own NFL page and pricing page
-     **contradict each other** on whether play-by-play is free or gated to the
-     $149/mo Edge plan — resolve that with a real key before writing integration
-     code. Live WebSocket push is $299/mo (Pro), not $49. Its free "live" is a
-     15-second REST cache, i.e. no better than ESPN, which is free and unmetered.
-   - **Leverage:** its NFL data is nflverse under CC BY 4.0 — not gatekept. The
-     raw play-by-play is a ~98 MB CSV on `nflverse/nflverse-data` GitHub releases
-     (too big to fetch in-browser, fine to slim down once with a script and ship
-     as static JSON). Don't pay for convenience you can pre-bake.
-   - Still unverified: `api.thescore.com` (a collaborator's preference) — **check
-     its CORS headers before committing to it**; permissive CORS is the only
-     reason the no-backend architecture works. Other paid options previously
-     evaluated: API-Sports, The Odds API (500 req/mo free, no sharp books),
-     SportsGameOdds ($99+/mo), SportsDataIO ($25/mo), Sportradar (enterprise).
-   - Also surveyed and rejected for live PBP: Tank01 via RapidAPI (real live
-     PBP, but 1,000 req/**month** free and no EPA), API-American-Football
-     (100/day, no EPA), Highlightly (PBP paywalled), BallDontLie (PBP paid).
-     Free + live + EPA together does not exist below enterprise pricing.
-
-2. **Proxy or not — still not needed, and the live-data argument for it is gone.**
-   `worker/` is ready but undeployed, and nothing on the live-data path requires
-   it: ESPN is keyless and CORS-open. It becomes necessary the moment a **keyed**
-   provider is added — EPA or odds — since a key in a public static file is a
-   public key. It also solves rate limits via edge caching (30s scores, 15min F1,
-   24h team lists). The frontend change is three constants. Deploy when odds work
-   starts, not before.
-   Two cleanups to do *before* it ever ships: `ALLOWED_ORIGINS` still contains the
-   placeholder `YOURUSERNAME`, and there's a `score` route pointed at
-   `api.thescore.com` that was never CORS-verified — cut it unless it's validated.
-
-3. **localStorage vs accounts.** Stay on localStorage. Optionally add a "sync
-   code" (Cloudflare KV, ~30 lines, no login) for cross-device. Build real
-   accounts only when a feature genuinely requires identity — social betting
-   would. Do not build auth preemptively.
-
-## Requested but not yet built
-
-- Team social media links. ESPN carries some; recent *posts* are not feasible —
-  X and Instagram killed free API access and embeds don't work reliably from a
-  local file.
-- Richer betting features generally — the collaborator's area.
-- **NBA shot chart.** Per-shot court coordinates (x/y) were the other
-  visualization worth building. Confirm ESPN exposes them before reaching for a
-  paid provider — the Drive view is a reminder that ESPN carries more than the
-  planning docs assumed. A shot chart doesn't need live data to be good.
-- **Post-game EPA analysis.** Drive charts and season-long team/player EPA, framed
-  as analysis rather than live. This is the one thing a second provider would
-  genuinely add (see Open decisions 1).
-
-### Planned, in dependency order — do NOT build all at once
-
-An accounts track was scoped in an 2026-08 planning session. It is **independent
-of the data question** and unblocked. Explicitly a learning project for Zach as
-much as a product decision, so prefer the real thing over a shortcut:
-
-1. **Cloudflare D1** (serverless SQLite) as the database. Free tier is far beyond
-   Fixtura's realistic scale (5M row reads/day, 100K writes/day, 5 GB).
-2. **OAuth login** (Google/GitHub) rather than storing password hashes — an
-   explicit preference, since these are people he knows personally. Then auth
-   roles (admin vs regular) and per-user rate limiting.
-3. **Cross-device sync** of favourites/settings — the original motivating use
-   case, and what replaces `localStorage`-only persistence.
-4. **Saved dashboard views**, then **pick'em** (per-user predictions scored over a
-   season — high interest), then **personal stats** over a season.
-5. **Push notifications — someday, explicitly low priority.** iOS Web Push only
-   works for a PWA **installed to the home screen**; it will never reach a Safari
-   tab. Needs a real `manifest.json` (the current `apple-mobile-web-app-capable`
-   meta is not sufficient on modern iOS), a service worker, a per-device
-   subscription tied to a user, and a Worker-side send trigger. **This is the one
-   roadmap item that breaks the single-file constraint** — a service worker must
-   be a separate same-origin file, so it's three files minimum. Make that a
-   deliberate decision, not a drift.
-
-**Infrastructure ceiling:** Worker + KV + D1 covers everything above, including a
-full betting suite. The only real breakpoint is training a custom EPA/WP model,
-which needs Python/ML tooling Workers can't run — and that would be a periodic
-offline job shipping its output into the Worker, not a live server. Don't
-over-engineer infrastructure ahead of this.
+Moved to **`DECISIONS.md`** — the data-provider evaluation, the proxy/Worker call,
+localStorage vs accounts, what is requested but unbuilt, and the planned order of the
+accounts track. Read it before starting anything on that track; it is not needed for
+ordinary changes, which is why it is no longer in this file.
 
 ## Working style
 
