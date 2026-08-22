@@ -43,6 +43,14 @@
   #clock{font-family:'Roboto Mono',monospace;font-size:11px;color:var(--dim-2)}
   #theme,.iconbtn{background:var(--panel);border:1px solid var(--line);color:var(--dim);border-radius:7px;padding:5px 9px;font-family:'Roboto Mono',monospace;font-size:11px}
   .iconbtn:hover{color:var(--accent);border-color:var(--accent-dim)}
+  .iconbtn.on{color:var(--accent);border-color:var(--accent-dim)}
+  .authwrap{position:relative}
+  .authmenu{display:none;position:absolute;right:0;top:calc(100% + 6px);z-index:40;min-width:172px;
+    background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:10px;
+    box-shadow:0 8px 22px rgba(0,0,0,.28)}
+  .authmenu.open{display:block}
+  .amname{font-size:12px;color:var(--text);font-weight:600;word-break:break-word}
+  .amsub{font-size:10px;color:var(--dim);font-family:'Roboto Mono',monospace;margin:2px 0 8px;word-break:break-all}
 
   nav.views{display:flex;gap:2px;padding:12px 20px 0;border-bottom:1px solid var(--line);overflow-x:auto}
   nav.views button{background:none;border:0;color:var(--dim);font-family:'Barlow Condensed',sans-serif;font-size:17px;font-weight:600;letter-spacing:.08em;padding:8px 14px 11px;border-bottom:2px solid transparent;white-space:nowrap}
@@ -361,6 +369,8 @@
   <h1 class="cond">FIX<span>TURA</span></h1>
   <div class="hright">
     <span id="clock">&mdash;</span>
+    <div class="authwrap"><button class="iconbtn" id="authBtn">Sign in</button>
+      <div class="authmenu" id="authMenu"></div></div>
     <button class="iconbtn" id="cfgBtn">Settings</button>
     <select id="theme">
       <option value="paper">Paper</option><option value="midnight">Midnight</option>
@@ -443,6 +453,10 @@ const WIKI='https://en.wikipedia.org/w/api.php';
 const GEO='https://geocoding-api.open-meteo.com/v1/search';
 const WXAPI='https://api.open-meteo.com/v1/forecast';
 const ERG='https://api.jolpi.ca/ergast/f1';
+// Our own Worker: accounts, settings sync, pick'em. Public sports data keeps going
+// to ESPN directly — the Worker's proxy lane exists for keyed providers and would
+// only add a hop for data that is already keyless and CORS-open. See DECISIONS.md.
+const APIBASE='https://fixtura-api.fixturaapp.workers.dev';
 const WX_CODES={0:'Clear sky',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Rime fog',51:'Light drizzle',53:'Drizzle',
  55:'Heavy drizzle',61:'Light rain',63:'Rain',65:'Heavy rain',71:'Light snow',73:'Snow',75:'Heavy snow',77:'Snow grains',
  80:'Rain showers',81:'Rain showers',82:'Violent showers',85:'Snow showers',86:'Snow showers',95:'Thunderstorm',96:'Thunderstorm, hail',99:'Severe thunderstorm'};
@@ -457,6 +471,7 @@ let modalData=null,modalTab='box',boxTeam=0,boxFilter='all',rosterTeam=0,lineupT
 let gameRosters=null,venueHTML=null,autoRefresh=true,showCfg=false;
 let MY_TEAMS=[],FAV_NAMES=[],TICKER_LEAGUES=[];
 let calMonth=new Date(),calCache=null,f1Season=null,f1Open={};
+let me=null,authToken=null,authExp=0,authMenu=false;
 
 /* ========================= UTIL ========================= */
 const $=s=>document.querySelector(s);
@@ -505,6 +520,136 @@ function stamp(){$('#updated').textContent='Updated '+new Date().toLocaleTimeStr
 function store(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v);}catch(e){return null;}}
 function modalOpen(){return $('#backdrop').classList.contains('open')||$('#pbackdrop').classList.contains('open');}
 
+/* ========================= ACCOUNT =========================
+   Everything here talks to our own Worker (APIBASE), never to ESPN. Signing in is
+   entirely optional: with no account the app behaves exactly as it always has,
+   backed by localStorage. An account adds cross-device sync and pick'em.
+
+   The Worker is the only thing that ever sees the Google client secret; this file
+   only ever holds a bearer token the Worker issued. */
+
+/* One place where the bearer header gets attached, so no call can forget it.
+   Mirrors get() above, but for our API rather than ESPN's. */
+async function api(path,opts){
+  const o=Object.assign({},opts||{});
+  const h=Object.assign({},o.headers||{});
+  if(authToken)h['Authorization']='Bearer '+authToken;
+  if(o.body!==undefined&&typeof o.body!=='string'){h['Content-Type']='application/json';o.body=JSON.stringify(o.body);}
+  o.headers=h;
+  const r=await fetch(APIBASE+path,o);
+  let j=null;try{j=await r.json();}catch(e){}
+  if(!r.ok){
+    // The Worker names what went wrong and why; carry that through rather than
+    // throwing a bare status, so a failure is diagnosable from the console.
+    const e=new Error((j&&j.error)||('HTTP '+r.status));
+    e.status=r.status;e.detail=j&&j.detail;e.requestId=j&&j.requestId;
+    throw e;
+  }
+  return j;
+}
+function readAuth(){
+  let a=null;try{const r=store('sb-auth');if(r)a=JSON.parse(r);}catch(e){}
+  if(!a||!a.token)return;
+  if(a.exp&&a.exp*1000<=Date.now())return;      // expired locally; don't bother the server
+  authToken=a.token;authExp=a.exp||0;
+}
+function saveAuth(){try{store('sb-auth',JSON.stringify({token:authToken,exp:authExp}));}catch(e){}}
+function clearAuth(){authToken=null;authExp=0;me=null;try{store('sb-auth','');}catch(e){}}
+
+async function initAuth(){
+  /* The callback returns the token in the URL *fragment*: a fragment is never sent
+     to a server, so it stays out of access logs and out of the Referer header of
+     whatever the page loads next. Take it, then strip it — otherwise it sits in the
+     address bar waiting to be copied into a message. */
+  try{
+    const h=location.hash||'';
+    if(h.indexOf('fixtura_token=')>=0){
+      const p=new URLSearchParams(h.replace(/^#/,''));
+      const t=p.get('fixtura_token');
+      if(t){authToken=t;authExp=+(p.get('fixtura_expires')||0)||0;saveAuth();}
+      history.replaceState(null,'',location.pathname+location.search);
+    }
+  }catch(e){}
+  if(!authToken)readAuth();
+  if(!authToken)return;
+  try{
+    const r=await api('/me');
+    me=(r&&r.user)||null;
+  }catch(e){
+    me=null;
+    // Only a 401 means the token is actually dead. Being unable to reach the Worker
+    // is not the same as being signed out, and must not silently log anyone out.
+    if(e.status===401)clearAuth();
+  }
+}
+function signIn(){
+  // Only the origin is checked by the Worker's allow-list, but send a clean URL
+  // anyway so nobody comes back to a stale query string.
+  location.href=APIBASE+'/auth/google/start?return='+encodeURIComponent(location.origin+location.pathname);
+}
+async function signOut(){
+  try{await api('/auth/logout',{method:'POST'});}catch(e){}   // already gone is not an error
+  clearAuth();authMenu=false;renderAuth();render();
+}
+function renderAuth(){
+  const b=$('#authBtn');if(!b)return;
+  b.textContent=me?(me.name||me.email||'Account'):'Sign in';
+  b.classList.toggle('on',!!me);
+  const m=$('#authMenu');if(!m)return;
+  m.classList.toggle('open',authMenu&&!!me);
+  if(authMenu&&me){
+    m.innerHTML='<div class="amname">'+esc(me.name||'')+'</div>'+
+      '<div class="amsub">'+esc(me.email||'')+'</div>'+
+      (me.role==='admin'?'<div class="amsub">admin</div>':'')+
+      '<button class="chip sm" id="authOut">Sign out</button>';
+    if($('#authOut'))$('#authOut').onclick=signOut;
+  }
+}
+
+/* ---- cross-device settings sync ----
+   The keys are exactly the existing sb-* localStorage names, so the server never
+   learns a second shape and store() stays the only writer. Semantics are: the
+   account wins on load, this device pushes on change. Real timestamp merging would
+   need a per-key mtime that store() does not track, and for one person on two
+   devices this is both correct and far simpler. */
+const SYNC_KEYS=['sb-favs','sb-ticker','sb-views','sb-theme'];
+function localSettings(){
+  const o={};
+  SYNC_KEYS.forEach(k=>{const v=store(k);if(v)o[k]=v;});
+  return o;
+}
+async function pullSettings(){
+  if(!me)return false;
+  let r;try{r=await api('/me/settings');}catch(e){return false;}
+  const s=(r&&r.settings)||{},keys=Object.keys(s).filter(k=>SYNC_KEYS.indexOf(k)>=0);
+  if(!keys.length){pushSettings();return false;}    // first sign-in: seed the account from this device
+  keys.forEach(k=>store(k,s[k].value));
+  return true;
+}
+function pushSettings(){
+  if(!me)return;
+  const out=localSettings();
+  if(!Object.keys(out).length)return;
+  // Fire and forget. A failed sync must never block a local write — store() already
+  // swallows its own failures for exactly the same reason.
+  api('/me/settings',{method:'PUT',body:{settings:out}}).catch(()=>{});
+}
+/* Re-apply what the account sent, using the same guards initSettings() uses: keep
+   only views that still exist, and never strand the user on a hidden tab. */
+function reloadFromStore(){
+  let s=null;try{const r=store('sb-favs');if(r)s=JSON.parse(r);}catch(e){}
+  if(Array.isArray(s)){MY_TEAMS=s;syncFavNames();calCache=null;}
+  let t=null;try{const r=store('sb-ticker');if(r)t=JSON.parse(r);}catch(e){}
+  if(Array.isArray(t)){TICKER_LEAGUES=t;tickerSig='';}
+  let v=null;try{const r=store('sb-views');if(r)v=JSON.parse(r);}catch(e){}
+  if(Array.isArray(v)){
+    const nv=v.filter(k=>VIEW_LABELS[k]);
+    if(nv.length){VIEW_ORDER=nv;if(VIEW_ORDER.indexOf(view)<0){view=VIEW_ORDER[0];saveLastView();}}
+  }
+  const th=store('sb-theme');
+  if(th){document.documentElement.setAttribute('data-theme',th);const el=$('#theme');if(el)el.value=th;}
+}
+
 /* ---- settings persistence ---- */
 function initSettings(){
   let s=null;try{const r=store('sb-favs');if(r)s=JSON.parse(r);}catch(e){}
@@ -528,7 +673,7 @@ function initSettings(){
     if(qt&&GOLF_TOURS.some(t=>t[0]===qt))golfTour=qt;
   }catch(e){}
 }
-function saveViews(){try{store('sb-views',JSON.stringify(VIEW_ORDER));}catch(e){}}
+function saveViews(){try{store('sb-views',JSON.stringify(VIEW_ORDER));}catch(e){}pushSettings();}
 function saveLastView(){try{store('sb-lastview',view);}catch(e){}}
 function renderNav(){
   $('#viewNav').innerHTML=VIEW_ORDER.map(k=>'<button'+(view===k?' class="on"':'')+' data-view="'+k+'">'+
@@ -538,8 +683,8 @@ function renderNav(){
 }
 function markNav(){document.querySelectorAll('#viewNav button').forEach(x=>x.classList.toggle('on',x.dataset.view===view));}
 function syncFavNames(){FAV_NAMES=MY_TEAMS.map(t=>t.name).filter(Boolean);}
-function saveFavs(){try{store('sb-favs',JSON.stringify(MY_TEAMS));}catch(e){}syncFavNames();calCache=null;}
-function saveTicker(){try{store('sb-ticker',JSON.stringify(TICKER_LEAGUES));}catch(e){}}
+function saveFavs(){try{store('sb-favs',JSON.stringify(MY_TEAMS));}catch(e){}syncFavNames();calCache=null;pushSettings();}
+function saveTicker(){try{store('sb-ticker',JSON.stringify(TICKER_LEAGUES));}catch(e){}pushSettings();}
 function favIndex(lg,id){return MY_TEAMS.findIndex(t=>t.league===lg&&String(t.id)===String(id));}
 function toggleFav(t){
   const i=favIndex(t.league,t.id);
@@ -573,7 +718,7 @@ function groupRank(name,kind){
   const saved=store('sb-theme')||'paper';
   document.documentElement.setAttribute('data-theme',saved);
   const s=$('#theme');s.value=saved;
-  s.onchange=()=>{document.documentElement.setAttribute('data-theme',s.value);store('sb-theme',s.value);};
+  s.onchange=()=>{document.documentElement.setAttribute('data-theme',s.value);store('sb-theme',s.value);pushSettings();};
 })();
 
 /* ========================= GAME CARD ========================= */
@@ -2681,6 +2826,17 @@ function render(){
 $('#cfgBtn').onclick=()=>{showCfg=!showCfg;
   if(view!=='scores'&&VIEW_ORDER.indexOf('scores')>=0){view='scores';saveLastView();markNav();}
   render();};
+$('#authBtn').onclick=e=>{
+  e.stopPropagation();
+  if(!me){signIn();return;}
+  authMenu=!authMenu;renderAuth();
+};
+// Any click outside closes the menu. Registered once, not per render.
+document.addEventListener('click',e=>{
+  if(!authMenu)return;
+  if(e.target.closest&&e.target.closest('.authwrap'))return;
+  authMenu=false;renderAuth();
+});
 $('#refresh').onclick=()=>{render();loadTicker();stamp();};
 $('#autoBtn').onclick=()=>{autoRefresh=!autoRefresh;
   $('#autoBtn').textContent='Auto-refresh: '+(autoRefresh?'on':'off');
@@ -2742,6 +2898,14 @@ clock();setInterval(clock,30000);
 initSettings();
 renderNav();
 render();loadTicker();stamp();
+/* Auth resolves after the first paint on purpose: the app is fully usable signed
+   out, so nothing should wait on a network round trip to our Worker. If an account
+   turns out to have settings, they are applied and the view redrawn. */
+initAuth().then(async()=>{
+  renderAuth();
+  if(!me)return;
+  if(await pullSettings()){reloadFromStore();renderNav();render();loadTicker();}
+}).catch(()=>{});
 // The ticker sits above the tab row, so it is on screen on every view — refresh it
 // regardless of which one is open. It used to be inside the scores branch, which left
 // a bar labelled LIVE showing whatever the scores were when the app was opened.

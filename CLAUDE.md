@@ -235,6 +235,25 @@ re-render by assigning `innerHTML` and re-wiring handlers.
   deliberately so a rename never wipes saved teams. Don't "tidy" them.
   Every write goes through `store()`, which swallows failures — localStorage is
   disabled entirely under `data:`/`file:` in some previews, and the app must still run.
+- **Account** (`ACCOUNT` section) — optional, and the app is fully usable without
+  one. `api()` is the single place the bearer header is attached, so no call to the
+  Worker can forget it; `APIBASE` points at the Worker and **only** account/pick'em
+  traffic goes there — ESPN is still called directly.
+  - The session token arrives in the URL *fragment* from the OAuth callback and is
+    stripped with `history.replaceState` immediately, so it never lingers in the
+    address bar to be copied into a message.
+  - `initAuth()` runs **after** the first paint, deliberately: nothing the app draws
+    should wait on a round trip to our Worker.
+  - A **401 signs you out; any other failure does not.** Being unable to reach the
+    Worker is not the same as being signed out, and must never silently log someone
+    out — there is a test for this.
+  - Sync semantics: **the account wins on load, the device pushes on change**
+    (`pullSettings()` / `pushSettings()`, allow-listed to `SYNC_KEYS`). Pushes are
+    fire-and-forget, because a failed sync must never block a local write. Real
+    timestamp merging would need a per-key mtime `store()` doesn't track; revisit
+    only if last-write-wins actually bites.
+  - Sign-in **cannot work over `file://`** — it needs the served site or
+    `localhost:8123`, both of which are on the Worker's origin allow-list.
 - **Refresh** — clock every 30s; one 60s timer for everything else. The ticker
   refreshes on **every** view, because it sits above the tab row and is always on
   screen; scores and golf refresh only when their view is the open one. Keep the
