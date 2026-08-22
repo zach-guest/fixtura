@@ -47,6 +47,22 @@ depends on the working directory, and `cd / && python3 -c '...'` runs fine. Usef
 for one-off analysis (decoding the inline icon, parsing a PNG) where there's no
 Node package to hand.
 
+**A local server does work**, same trick — `--directory` means the server never has
+to resolve the cwd:
+
+```bash
+cd / && (python3 -m http.server 8123 --directory /Users/zguest/Documents/Fixtura &)
+```
+
+This matters more than it sounds: the Chrome extension **refuses `file://` URLs**
+("Can't interact with browser-internal or unparseable URLs"), so serving over HTTP is
+the only way to drive the real app from the browser tools. It is also the only way to
+exercise anything that reads response headers — `showBuildInfo()` and
+`checkForUpdate()` short-circuit on a non-`http(s)` protocol and can't be tested at
+all from a file URL. Kill it with `pkill -f "http.server 8123"` when done, and
+remember the browser caches: navigate to `?v=2` rather than wondering why an edit
+didn't take.
+
 **Syntax-check every edit. It takes a second.** Node v24 is installed at
 `/usr/local/bin/node`, so the script block can be extracted and parsed without a
 build step:
