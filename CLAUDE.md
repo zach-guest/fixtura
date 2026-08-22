@@ -18,7 +18,7 @@ deploy is a feature, not an accident.
 
 ## Layout
 
-- `index.html` — the entire app, ~2,700 lines. (Re-check with `wc -l` when you edit
+- `index.html` — the entire app, ~3,240 lines. (Re-check with `wc -l` when you edit
   this line; it has been wrong by a thousand lines before.)
 - `worker/` — the Cloudflare Worker API, **deployed 2026-08-22** at
   `https://fixtura-api.fixturaapp.workers.dev`. The frontend does not reference it
@@ -196,6 +196,23 @@ re-render by assigning `innerHTML` and re-wiring handlers.
     different controls and must not look alike. Leaderboard rows carry a `.gcar`
     chevron and a one-line hint because nothing else signals that they expand.
   - *Calendar*: month grid with favourite teams' logos on days they play.
+  - *Pick'em*: the only view that needs an account, and the only one that writes
+    to our own Worker. Signed out it is a single explanatory panel, not an error.
+    Three sub-tabs on `.gtabs` (**not** `.chip` — see the Golf note): My picks,
+    Everyone, Standings. All new classes are `pk`-prefixed against the 175 that
+    already exist (see hard-won detail 12).
+    - A pick is two buttons, not a select: one tap on a phone, and the choice
+      stays visible. Saving is **optimistic** — the button lights up immediately
+      and is put back if the server refuses, because waiting on a round trip to
+      confirm a tap feels broken. The server still decides.
+    - Nothing about locking, eligibility or results is decided here. The Worker
+      sends `locked`, `final` and `winner_id`; this file renders them. A blank in
+      the Everyone grid is not hidden — the pick was never sent.
+    - A correct-looking pick is only coloured once the game is **final**. Colouring
+      it at half time is a tease, not information.
+    - `pkNotesHTML()` is separate from `pkPicksHTML()` so a tap can refresh the
+      "still to pick" count in place; re-rendering the list would jump you back to
+      the top of a 16-game week.
 - **Drive view** (football only) — a `Drive` tab in the game modal: a
   hover-readable win-probability chart, an animated 100-yard field with
   team-coloured end zones, and an expandable drive list naming the scorer on each
@@ -589,6 +606,22 @@ Each was a real bug found in testing. All are non-obvious and easy to reintroduc
     against all five upstreams. The pre-restructure `worker.js` sent one of the
     blocked strings, so every ESPN call would have failed the day it was deployed.
     It is deterministic, not rate limiting: re-probe before changing it.
+
+19. **Adding a view to `VIEW_LABELS` does not make it appear.** `sb-views` is a
+    snapshot of the views that existed when it was saved, so anyone who has ever
+    reordered their tabs — or synced a layout to their account — would never see a
+    newly added view, and would have no way to find out it exists. `reconcileViews()`
+    appends anything the layout has not been reconciled against, tracked in
+    `sb-viewsseen`. Two things about it are load-bearing:
+    - It is **pure**. Writing the marker inside it looked right and was not: boot
+      reconciles the *local* layout first, so the marker was already written by the
+      time the account's older layout arrived, and the new view was suppressed
+      again. The marker is written in `saveViews()` only — the moment the user
+      actually changes their tabs is the moment their intent is real.
+    - `VIEWS_KNOWN_BEFORE` bootstraps the marker for layouts that predate it. It
+      lists the five views that existed at the time and must not be "tidied" to
+      match `VIEW_LABELS`, or hiding an old view would un-hide it once.
+    Caught within a minute of adding PICK'EM: the tab vanished on sign-in.
 
 ## Known limitations
 

@@ -26,8 +26,23 @@
       "Bash(npm run types)",
       "Bash(npm run db:schema:local)",
       "Bash(./test.sh)",
+      "Bash(KEEP=1 ./test.sh)",
       "Bash(curl -s \"http://localhost:8787/*)",
-      "Bash(curl -s \"https://fixtura-api.*)"
+      "Bash(curl -s \"http://localhost:8123/*)",
+      "Bash(curl -s \"https://fixtura-api.*)",
+
+      "Edit(/Users/zguest/Documents/Fixtura/**)",
+      "Bash(node --check:*)",
+      "Bash(wc:*)",
+      "Bash(grep:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(ls:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(pkill -f \"http.server 8123\")"
     ]
   }
 }

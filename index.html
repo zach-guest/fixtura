@@ -338,6 +338,64 @@
   .cbrow{display:flex;align-items:center;gap:7px;font-size:12.5px}
   .cbrow input{accent-color:var(--accent)}
 
+  /* PICK'EM. Every colour is a theme token — a literal hex here would look
+     correct in paper and wrong in the other four. */
+  .pktext{font-size:13px;line-height:1.55;margin:0 0 10px}
+  .pktext.dim{color:var(--dim)}
+  .pkform{display:flex;gap:7px;flex-wrap:wrap}
+  .pkform input{flex:1 1 180px;min-width:0;background:var(--panel-2);border:1px solid var(--line);
+    color:var(--text);border-radius:7px;padding:7px 10px;font-size:13px;font-family:inherit}
+  .pkform input:focus{outline:none;border-color:var(--accent-dim)}
+  .pkbar{margin-bottom:12px}
+  .pkhead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:12px}
+  .pkname{font-weight:700;font-size:15px}
+  .pkmeta{font-family:'Roboto Mono',monospace;font-size:10.5px;color:var(--dim);margin-top:3px}
+  .pkcode{font-family:'Roboto Mono',monospace;letter-spacing:2px}
+  .pkweek{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+  .pkwlabel{font-family:'Roboto Mono',monospace;font-size:12px;color:var(--dim);min-width:64px;text-align:center}
+  .pkgames{display:flex;flex-direction:column;gap:8px}
+  .pkgame{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+  .pkgame.locked{opacity:.82}
+  .pkwhen{font-family:'Roboto Mono',monospace;font-size:10px;color:var(--dim-2);
+    text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+  .pkteams{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .pkteam{display:flex;align-items:center;gap:7px;background:var(--panel-2);border:1px solid var(--line);
+    color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px;font-weight:600;
+    text-align:left;min-width:0;transition:border-color .12s,background .12s}
+  .pkteam img{width:20px;height:20px;object-fit:contain;flex:none}
+  .pkabbr{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pkscore{font-family:'Roboto Mono',monospace;font-size:12px;color:var(--dim)}
+  .pkteam:hover:not(:disabled){border-color:var(--accent-dim)}
+  .pkteam.on{border-color:var(--accent);background:var(--accent);color:var(--on-accent)}
+  .pkteam.on .pkscore{color:var(--on-accent)}
+  .pkteam.on.win{border-color:var(--win);background:var(--win)}
+  .pkteam.on.loss{border-color:var(--loss);background:var(--loss)}
+  .pkteam.lock{cursor:default}
+  .pknote{font-family:'Roboto Mono',monospace;font-size:11px;color:var(--dim);margin-bottom:9px}
+  .pknote.warn{color:var(--accent)}
+  .pkhint{font-family:'Roboto Mono',monospace;font-size:10.5px;color:var(--dim-2);margin-top:11px;line-height:1.5}
+  .pkgridwrap{padding:0}
+  .pkgrid{border-collapse:collapse;font-size:12px;width:100%}
+  .pkgrid th,.pkgrid td{padding:6px 8px;text-align:center;border-bottom:1px solid var(--line-soft);white-space:nowrap}
+  .pkgrid th{font-family:'Roboto Mono',monospace;font-size:9.5px;color:var(--dim-2);
+    text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+  .pkgrid th.pending{color:var(--dim-2);opacity:.6}
+  .pkwho{text-align:left;font-weight:600}
+  .pkrank{font-family:'Roboto Mono',monospace;color:var(--dim-2)}
+  .pkcell{font-family:'Roboto Mono',monospace;font-weight:600}
+  .pkcell.empty{color:var(--dim-2);font-weight:400}
+  .pkcell.win{color:var(--win)}
+  .pkcell.loss{color:var(--loss)}
+  tr.pkme{background:var(--panel-2)}
+  .pkstand td{text-align:center}
+  .pktoast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(8px);z-index:60;
+    background:var(--panel);border:1px solid var(--accent-dim);color:var(--text);border-radius:9px;
+    padding:9px 14px;font-size:12.5px;max-width:min(420px,90vw);box-shadow:0 8px 24px rgba(0,0,0,.3);
+    opacity:0;pointer-events:none;transition:opacity .18s,transform .18s}
+  .pktoast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  @media (prefers-reduced-motion:reduce){.pktoast,.pkteam{transition:none}}
+
   footer{border-top:1px solid var(--line);text-align:center;padding:14px;font-family:'Roboto Mono',monospace;font-size:10.5px;color:var(--dim-2)}
   .fbar{display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:8px}
   footer button{background:var(--panel);border:1px solid var(--line);color:var(--dim);border-radius:6px;padding:5px 11px;font-family:'Roboto Mono',monospace;font-size:10.5px}
@@ -389,6 +447,7 @@
     <button id="refresh">Refresh now</button>
     <button id="autoBtn" class="on">Auto-refresh: on</button></div>
 </footer>
+<div class="pktoast" id="pkToast"></div>
 <div class="upd" id="updBanner"><span>A new version of Fixtura is available</span>
   <button id="updReload">Reload</button><button class="x" id="updDismiss">&times;</button></div>
 
@@ -439,8 +498,8 @@ const DEFAULT_TEAMS=[
 ];
 // Tab row. VIEW_ORDER (persisted) holds the visible keys in display order; anything in
 // VIEW_LABELS but not in VIEW_ORDER is simply hidden.
-const VIEW_LABELS={scores:'SCORES',teams:'TEAMS',f1:'F1',golf:'GOLF',calendar:'CALENDAR'};
-const DEFAULT_VIEWS=['scores','teams','f1','golf','calendar'];
+const VIEW_LABELS={scores:'SCORES',teams:'TEAMS',f1:'F1',golf:'GOLF',calendar:'CALENDAR',pickem:"PICK'EM"};
+const DEFAULT_VIEWS=['scores','teams','f1','golf','calendar','pickem'];
 const GOLF_TOURS=[['pga','PGA'],['lpga','LPGA'],['liv','LIV'],['eur','DP World'],
   ['champions-tour','Champions'],['ntw','Korn Ferry']];
 const LIVE_SCAN=['nfl','ncaaf','nba','wnba','ncaam','mlb','nhl','soc:eng.1','soc:esp.1','soc:ger.1','soc:ita.1','soc:fra.1','soc:usa.1','soc:uefa.champions'];
@@ -472,6 +531,7 @@ let gameRosters=null,venueHTML=null,autoRefresh=true,showCfg=false;
 let MY_TEAMS=[],FAV_NAMES=[],TICKER_LEAGUES=[];
 let calMonth=new Date(),calCache=null,f1Season=null,f1Open={};
 let me=null,authToken=null,authExp=0,authMenu=false;
+let pkPools=null,pkPool=null,pkTab='picks',pkWeek=1,pkData=null,pkErr='',pkBusy=false;
 
 /* ========================= UTIL ========================= */
 const $=s=>document.querySelector(s);
@@ -612,7 +672,7 @@ function renderAuth(){
    account wins on load, this device pushes on change. Real timestamp merging would
    need a per-key mtime that store() does not track, and for one person on two
    devices this is both correct and far simpler. */
-const SYNC_KEYS=['sb-favs','sb-ticker','sb-views','sb-theme'];
+const SYNC_KEYS=['sb-favs','sb-ticker','sb-views','sb-theme','sb-viewsseen'];
 function localSettings(){
   const o={};
   SYNC_KEYS.forEach(k=>{const v=store(k);if(v)o[k]=v;});
@@ -644,7 +704,9 @@ function reloadFromStore(){
   let v=null;try{const r=store('sb-views');if(r)v=JSON.parse(r);}catch(e){}
   if(Array.isArray(v)){
     const nv=v.filter(k=>VIEW_LABELS[k]);
-    if(nv.length){VIEW_ORDER=nv;if(VIEW_ORDER.indexOf(view)<0){view=VIEW_ORDER[0];saveLastView();}}
+    // Same reconciliation as on boot: an account's saved layout is just as old
+    // as a local one, and would otherwise hide any newly added view.
+    if(nv.length){VIEW_ORDER=reconcileViews(nv);if(VIEW_ORDER.indexOf(view)<0){view=VIEW_ORDER[0];saveLastView();}}
   }
   const th=store('sb-theme');
   if(th){document.documentElement.setAttribute('data-theme',th);const el=$('#theme');if(el)el.value=th;}
@@ -660,6 +722,7 @@ function initSettings(){
   // keep only keys that still exist, so removing a view can't strand a saved layout
   VIEW_ORDER=(Array.isArray(v)?v:DEFAULT_VIEWS.slice()).filter(k=>VIEW_LABELS[k]);
   if(!VIEW_ORDER.length)VIEW_ORDER=DEFAULT_VIEWS.slice();
+  VIEW_ORDER=reconcileViews(VIEW_ORDER);
   const last=store('sb-lastview');
   view=(last&&VIEW_ORDER.indexOf(last)>=0)?last:VIEW_ORDER[0];
   // ?view=golf&tour=lpga — lets a shared link open on a specific view instead of
@@ -673,7 +736,37 @@ function initSettings(){
     if(qt&&GOLF_TOURS.some(t=>t[0]===qt))golfTour=qt;
   }catch(e){}
 }
-function saveViews(){try{store('sb-views',JSON.stringify(VIEW_ORDER));}catch(e){}pushSettings();}
+/* The set of views that existed before this reconciliation was introduced. Only
+   used to bootstrap `sb-viewsseen` for people whose layout predates it. */
+const VIEWS_KNOWN_BEFORE=['scores','teams','f1','golf','calendar'];
+/* A saved tab layout is a snapshot of the views that existed when it was saved,
+   so adding a view would leave it permanently invisible to anyone who had ever
+   reordered their tabs — they would simply never find out it exists. This
+   appends any view the layout has not been reconciled against, exactly once.
+   Hide it afterwards and it stays hidden, because by then it is in the seen list.
+   Found the hard way: PICK'EM vanished the moment a saved layout was synced.
+
+   This is deliberately PURE. Writing the marker here looked right and was not:
+   boot reconciles the *local* layout first, so the marker was already written by
+   the time the account's older layout arrived, and the new view was suppressed
+   again. The marker is only written when the user actually changes their tabs —
+   which is the moment their intent is real. Until then a new view keeps
+   reappearing, which is the behaviour you want; hide it and the write in
+   saveViews() records that, so it stays hidden. */
+function reconcileViews(order){
+  let seen=null;try{const r=store('sb-viewsseen');if(r)seen=JSON.parse(r);}catch(e){}
+  if(!Array.isArray(seen))seen=VIEWS_KNOWN_BEFORE.slice();
+  const out=order.slice();
+  Object.keys(VIEW_LABELS).forEach(k=>{if(seen.indexOf(k)<0&&out.indexOf(k)<0)out.push(k);});
+  return out;
+}
+function saveViews(){
+  try{
+    store('sb-views',JSON.stringify(VIEW_ORDER));
+    store('sb-viewsseen',JSON.stringify(Object.keys(VIEW_LABELS)));  // their layout is now a decision
+  }catch(e){}
+  pushSettings();
+}
 function saveLastView(){try{store('sb-lastview',view);}catch(e){}}
 function renderNav(){
   $('#viewNav').innerHTML=VIEW_ORDER.map(k=>'<button'+(view===k?' class="on"':'')+' data-view="'+k+'">'+
@@ -2371,6 +2464,247 @@ async function toggleRace(round){
   }catch(e){cell.innerHTML='<div class="msg err">Couldn\'t load that race.</div>';}
 }
 
+/* ========================= PICK'EM =========================
+   The only view that needs an account, and the only one that writes to our own
+   Worker. Everything about what is pickable, when it locks, and who won comes
+   from the server — this file never decides any of it. Two rules in particular
+   are the Worker's and must not be re-implemented here:
+     - a game locks at its own kickoff, per game, not per week
+     - another person's pick is simply absent from the payload until their game
+       starts, so there is nothing to hide at render time
+   Note the second one: if a pick isn't in `picks`, it is not "hidden", it was
+   never sent. Rendering a blank is the whole job. */
+
+const PK_MAX_WEEK=18;
+
+function pkSet(k,v){try{store('sb-pk-'+k,v);}catch(e){}}
+function pkGet(k){try{return store('sb-pk-'+k);}catch(e){return null;}}
+
+async function renderPickem(){
+  if(!me){$('#main').innerHTML=pkSignedOutHTML();pkWire();return;}
+  if(!pkPools){
+    $('#main').innerHTML='<div class="msg">Loading your pools…</div>';
+    try{pkPools=(await api('/pools')).pools||[];}
+    catch(e){$('#main').innerHTML='<div class="msg err">'+esc(e.message)+'</div>';return;}
+    const saved=pkGet('pool');
+    pkPool=pkPools.find(p=>String(p.id)===String(saved))||pkPools[0]||null;
+  }
+  if(!pkPool){$('#main').innerHTML=pkNoPoolsHTML();pkWire();return;}
+  $('#main').innerHTML=pkShellHTML()+'<div id="pkbody"><div class="msg">Loading…</div></div>';
+  pkWire();
+  pkLoadTab();
+}
+
+function pkSignedOutHTML(){
+  return '<div class="panel pkintro"><div class="grouplabel" style="margin:0 0 6px">Pick’em</div>'+
+    '<p class="pktext">Pick every game, week by week, against your friends. One point a winner.</p>'+
+    '<p class="pktext dim">It needs an account so your picks follow you between devices and everyone '+
+    'sees the same leaderboard. Nothing else in Fixtura does.</p>'+
+    '<button class="chip" id="pkSignin">Sign in with Google</button></div>';
+}
+
+function pkNoPoolsHTML(){
+  return '<div class="panel"><div class="grouplabel" style="margin:0 0 6px">Start a pool</div>'+
+    '<p class="pktext dim">You pick, your friends pick, the winner is whoever calls the most games.</p>'+
+    '<div class="pkform"><input id="pkName" type="text" maxlength="60" placeholder="Pool name" '+
+      'value="'+esc((me&&me.name?me.name.split(' ')[0]+'’s':'Sunday')+' Pool')+'">'+
+      '<button class="chip" id="pkCreate">Create</button></div></div>'+
+    '<div class="panel"><div class="grouplabel" style="margin:0 0 6px">Or join one</div>'+
+    '<p class="pktext dim">Whoever made the pool has a six-character code.</p>'+
+    '<div class="pkform"><input id="pkCode" type="text" maxlength="6" placeholder="ABC123" '+
+      'style="text-transform:uppercase;font-family:\'Roboto Mono\',monospace;letter-spacing:2px">'+
+      '<button class="chip" id="pkJoin">Join</button></div></div>'+
+    (pkErr?'<div class="msg err">'+esc(pkErr)+'</div>':'');
+}
+
+function pkShellHTML(){
+  const tabs=[['picks','My picks'],['pool','Everyone'],['standings','Standings']];
+  return (pkPools.length>1||true?'<div class="subchips pkbar">'+
+      pkPools.map(p=>'<button class="chip sm '+(pkPool&&p.id===pkPool.id?'on':'')+'" data-pkp="'+p.id+'">'+
+        esc(p.name)+'</button>').join('')+
+      '<button class="chip sm" data-pkp="new">+ New / join</button></div>':'')+
+    '<div class="pkhead"><div><div class="pkname">'+esc(pkPool.name)+'</div>'+
+      '<div class="pkmeta">'+esc(String(pkPool.season))+' · '+esc((pkPool.league||'').toUpperCase())+
+      ' · straight up · '+esc(String(pkPool.members||1))+' '+((pkPool.members||1)===1?'player':'players')+'</div></div>'+
+      '<button class="chip sm pkcode" id="pkCopy" title="Copy the join code">'+esc(pkPool.join_code||'')+'</button></div>'+
+    '<div class="pkweek"><button class="chip sm" id="pkPrev"'+(pkWeek<=1?' disabled':'')+'>‹</button>'+
+      '<span class="pkwlabel">Week '+pkWeek+'</span>'+
+      '<button class="chip sm" id="pkNext"'+(pkWeek>=PK_MAX_WEEK?' disabled':'')+'>›</button></div>'+
+    '<div class="gtabs">'+tabs.map(t=>'<button class="'+(pkTab===t[0]?'on':'')+'" data-pkt="'+t[0]+'">'+
+      t[1]+'</button>').join('')+'</div>';
+}
+
+async function pkLoadTab(){
+  const box=$('#pkbody');if(!box)return;
+  try{
+    if(pkTab==='standings'){
+      const s=await api('/pools/'+pkPool.id+'/standings');
+      box.innerHTML=pkStandingsHTML(s);
+    }else{
+      pkData=await api('/pools/'+pkPool.id+'/week/'+pkWeek);
+      box.innerHTML=pkTab==='picks'?pkPicksHTML(pkData):pkGridHTML(pkData);
+      pkWireBody();
+    }
+  }catch(e){box.innerHTML='<div class="msg err">'+esc(e.message)+'</div>';}
+}
+
+/* A game row. The pick is a pair of buttons rather than a select: on a phone it
+   is one tap, and the choice stays visible without opening anything. */
+function pkPicksHTML(d){
+  if(!d.games.length)return '<div class="msg">No games scheduled for week '+d.week+'.</div>';
+  const mine=d.myPicks||{};
+  const rows=d.games.map(g=>{
+    const pick=mine[g.id]||'';
+    const side=(t,which)=>{
+      const on=pick===t.id;
+      // Only colour a pick once the game is over: a correct-looking pick at
+      // half time is not information, it is a tease.
+      const verdict=g.final&&on?(g.winner_id===t.id?' win':g.winner_id?' loss':' push'):'';
+      return '<button class="pkteam'+(on?' on':'')+verdict+(g.locked?' lock':'')+'" '+
+        'data-pkg="'+esc(g.id)+'" data-pkteam="'+esc(t.id)+'"'+(g.locked?' disabled':'')+'>'+
+        (t.logo?'<img src="'+esc(t.logo)+'" alt="" onerror="this.style.display=\'none\'">':'')+
+        '<span class="pkabbr">'+esc(t.abbrev||t.name)+'</span>'+
+        (g.final||g.state==='in'?'<span class="pkscore">'+esc(num(t.score))+'</span>':'')+
+        '</button>';
+    };
+    const when=g.final?'Final':g.state==='in'?'Live':gameTime(g.date);
+    return '<div class="pkgame'+(g.locked?' locked':'')+'">'+
+      '<div class="pkwhen">'+esc(when)+(g.locked&&!g.final?' · locked':'')+'</div>'+
+      '<div class="pkteams">'+side(g.away,'away')+side(g.home,'home')+'</div></div>';
+  }).join('');
+  return '<div id="pknotes">'+pkNotesHTML(d)+'</div><div class="pkgames">'+rows+'</div>'+
+    '<div class="pkhint">Picks save as you tap them, and stay changeable until each game kicks off.</div>';
+}
+
+/* Kept separate so a tap can refresh the count in place. Re-rendering the whole
+   list would jump you back to the top mid-way down a 16-game week. */
+function pkNotesHTML(d){
+  const mine=d.myPicks||{};
+  let done=0,right=0;
+  d.games.forEach(g=>{if(g.final&&mine[g.id]){done++;if(g.winner_id===mine[g.id])right++;}});
+  const unpicked=d.games.filter(g=>!g.locked&&!mine[g.id]).length;
+  return (done?'<div class="pknote">'+right+' of '+done+' right so far this week.</div>':'')+
+    (unpicked?'<div class="pknote warn">'+unpicked+' game'+(unpicked===1?'':'s')+' still to pick.</div>'
+             :'<div class="pknote">Every game picked.</div>');
+}
+
+/* Everyone's picks. Blanks are not censorship — the server does not send another
+   person's pick until their game starts, so there is nothing here to leak. */
+function pkGridHTML(d){
+  if(!d.games.length)return '<div class="msg">No games scheduled for week '+d.week+'.</div>';
+  const others=d.picks||{},mine=d.myPicks||{};
+  const meRow=Object.assign({},mine);
+  const rows=d.members.map(mem=>{
+    const isMe=me&&mem.id===me.id;
+    const picks=isMe?meRow:(others[mem.id]||{});
+    const cells=d.games.map(g=>{
+      const sel=picks[g.id];
+      if(!sel)return '<td class="pkcell empty">'+(g.locked?'—':'·')+'</td>';
+      const t=sel===g.home.id?g.home:g.away;
+      const cls=g.final?(g.winner_id===sel?' win':g.winner_id?' loss':' push'):'';
+      return '<td class="pkcell'+cls+'">'+esc(t.abbrev||'?')+'</td>';
+    }).join('');
+    return '<tr'+(isMe?' class="pkme"':'')+'><td class="pkwho">'+esc(mem.name||'—')+'</td>'+cells+'</tr>';
+  }).join('');
+  const head=d.games.map(g=>'<th class="pkcol'+(g.locked?'':' pending')+'">'+
+    esc((g.away.abbrev||'')+' '+(g.home.abbrev||''))+'</th>').join('');
+  const hidden=d.games.filter(g=>!g.locked).length;
+  return '<div class="gwrap pkgridwrap"><table class="pkgrid"><thead><tr><th></th>'+head+'</tr></thead>'+
+    '<tbody>'+rows+'</tbody></table></div>'+
+    (hidden?'<div class="pkhint">'+hidden+' game'+(hidden===1?'':'s')+' still to kick off. '+
+      'Nobody can see anyone else’s pick on those — the server doesn’t send them.</div>':'');
+}
+
+function pkStandingsHTML(s){
+  const rows=(s.standings||[]);
+  if(!rows.length)return '<div class="msg">Nothing scored yet.</div>';
+  const any=rows.some(r=>r.wins||r.losses);
+  if(!any)return '<div class="msg">No games have finished yet. Standings appear once results are in.</div>';
+  return '<div class="gwrap"><table class="pkgrid pkstand"><thead><tr><th></th><th>Player</th>'+
+    '<th>W</th><th>L</th><th>Push</th><th>Pct</th></tr></thead><tbody>'+
+    rows.map((r,i)=>'<tr'+(me&&r.user_id===me.id?' class="pkme"':'')+'>'+
+      '<td class="pkrank">'+(i+1)+'</td><td class="pkwho">'+esc(r.name||'—')+'</td>'+
+      '<td>'+num(r.wins)+'</td><td>'+num(r.losses)+'</td><td>'+num(r.pushes)+'</td>'+
+      '<td>'+(r.pct===null||r.pct===undefined?'—':esc(r.pct)+'%')+'</td></tr>').join('')+
+    '</tbody></table></div>'+
+    '<div class="pkhint">Weeks scored: '+(s.weeks&&s.weeks.length?esc(s.weeks.join(', ')):'none yet')+'.</div>';
+}
+
+/* Tap to pick. Optimistic: the button lights up immediately and is put back if
+   the server refuses, because waiting on a round trip to confirm a tap feels
+   broken on a phone. The server is still the only thing that decides. */
+async function pkPick(eventId,teamId,btn){
+  if(pkBusy)return;
+  pkBusy=true;
+  const row=btn.parentElement;
+  const prev=[...row.querySelectorAll('.pkteam')].map(b=>b.classList.contains('on'));
+  row.querySelectorAll('.pkteam').forEach(b=>b.classList.toggle('on',b===btn));
+  try{
+    const r=await api('/pools/'+pkPool.id+'/picks',
+      {method:'PUT',body:{week:pkData.week,picks:[{event_id:eventId,selection_id:teamId}]}});
+    if(r.rejected&&r.rejected.length){
+      row.querySelectorAll('.pkteam').forEach((b,i)=>b.classList.toggle('on',prev[i]));
+      pkToast(r.rejected[0].why||'that pick was refused');
+      pkLoadTab();                                   // the week has moved on; get the truth
+    }else{
+      pkData.myPicks[eventId]=teamId;
+      const n=$('#pknotes');if(n)n.innerHTML=pkNotesHTML(pkData);
+    }
+  }catch(e){
+    row.querySelectorAll('.pkteam').forEach((b,i)=>b.classList.toggle('on',prev[i]));
+    pkToast(e.message);
+  }
+  pkBusy=false;
+}
+
+function pkToast(msg){
+  const el=$('#pkToast');if(!el)return;
+  el.textContent=msg;el.classList.add('show');
+  clearTimeout(pkToast._t);
+  pkToast._t=setTimeout(()=>el.classList.remove('show'),3500);
+}
+
+function pkWire(){
+  if($('#pkSignin'))$('#pkSignin').onclick=signIn;
+  if($('#pkCreate'))$('#pkCreate').onclick=async()=>{
+    const name=($('#pkName').value||'').trim();
+    pkErr='';
+    try{
+      const r=await api('/pools',{method:'POST',body:{name:name,season:new Date().getFullYear(),league:'nfl'}});
+      pkPools=null;pkPool=null;pkSet('pool',r.pool.id);renderPickem();
+    }catch(e){pkErr=e.message;renderPickem();}
+  };
+  if($('#pkJoin'))$('#pkJoin').onclick=async()=>{
+    const code=($('#pkCode').value||'').trim().toUpperCase();
+    pkErr='';
+    try{
+      const r=await api('/pools/join',{method:'POST',body:{code:code}});
+      pkPools=null;pkPool=null;pkSet('pool',r.pool.id);renderPickem();
+    }catch(e){pkErr=e.message;renderPickem();}
+  };
+  document.querySelectorAll('[data-pkp]').forEach(b=>b.onclick=()=>{
+    if(b.dataset.pkp==='new'){pkPool=null;pkPools=pkPools||[];$('#main').innerHTML=pkNoPoolsHTML();pkWire();return;}
+    pkPool=pkPools.find(p=>String(p.id)===b.dataset.pkp)||pkPool;
+    pkSet('pool',pkPool.id);renderPickem();
+  });
+  document.querySelectorAll('[data-pkt]').forEach(b=>b.onclick=()=>{
+    pkTab=b.dataset.pkt;renderPickem();});
+  if($('#pkPrev'))$('#pkPrev').onclick=()=>{if(pkWeek>1){pkWeek--;renderPickem();}};
+  if($('#pkNext'))$('#pkNext').onclick=()=>{if(pkWeek<PK_MAX_WEEK){pkWeek++;renderPickem();}};
+  if($('#pkCopy'))$('#pkCopy').onclick=()=>{
+    const c=pkPool&&pkPool.join_code||'';
+    // The clipboard API needs a secure context and can be refused; say so rather
+    // than silently doing nothing.
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(c).then(()=>pkToast('Join code '+c+' copied'),()=>pkToast('Join code: '+c));
+    }else pkToast('Join code: '+c);
+  };
+}
+function pkWireBody(){
+  document.querySelectorAll('.pkteam[data-pkg]').forEach(b=>b.onclick=()=>
+    pkPick(b.dataset.pkg,b.dataset.pkteam,b));
+}
+
 /* ========================= TICKER ========================= */
 let tickerSig='';const TICKER_SPEED=60;
 function paintTicker(items){
@@ -2821,6 +3155,7 @@ function render(){
   else if(view==='calendar')renderCalendar();
   else if(view==='teams')renderTeamsShell();
   else if(view==='golf')renderGolf();
+  else if(view==='pickem')renderPickem();
   else loadF1();
 }
 $('#cfgBtn').onclick=()=>{showCfg=!showCfg;
