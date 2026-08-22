@@ -38,21 +38,32 @@ what is planned, which is read occasionally rather than every turn. Keep it that
      (100/day, no EPA), Highlightly (PBP paywalled), BallDontLie (PBP paid).
      Free + live + EPA together does not exist below enterprise pricing.
 
-2. **Proxy or not — still not needed, and the live-data argument for it is gone.**
-   `worker/` is ready but undeployed, and nothing on the live-data path requires
-   it: ESPN is keyless and CORS-open. It becomes necessary the moment a **keyed**
-   provider is added — EPA or odds — since a key in a public static file is a
-   public key. It also solves rate limits via edge caching (30s scores, 15min F1,
-   24h team lists). The frontend change is three constants. Deploy when odds work
-   starts, not before.
-   Two cleanups to do *before* it ever ships: `ALLOWED_ORIGINS` still contains the
-   placeholder `YOURUSERNAME`, and there's a `score` route pointed at
-   `api.thescore.com` that was never CORS-verified — cut it unless it's validated.
+2. **Proxy or not — settled by the accounts track, not by the data question.**
+   The original argument still holds on its own terms: nothing on the *live-data*
+   path needs a proxy, because ESPN is keyless and CORS-open, and the proxy only
+   becomes necessary for a **keyed** provider (EPA or odds), since a key in a
+   public static file is a public key. It also solves rate limits via edge caching
+   (30s scores, 15min F1, 24h team lists), and the frontend change is three
+   constants.
+   What changed on 2026-08-21 is that accounts need a server regardless, so the
+   worker is deployed for auth whether or not a keyed provider ever lands — it
+   went live 2026-08-22 at `https://fixtura-api.fixturaapp.workers.dev`.
+   The proxy lane rides along and is verified working end to end, but the
+   frontend still calls ESPN directly and there is no reason to change that yet.
+   Both pre-ship cleanups are **done**: `ALLOWED_ORIGINS` now names the real
+   origins, and the unverified `api.thescore.com` route is cut. Re-add `score`
+   only with a real CORS check.
+   Also found while testing: ESPN 403s the worker based on its User-Agent, which
+   the browser never sees. The worker would have failed every ESPN call on day
+   one. See hard-won detail 18 in `CLAUDE.md`.
 
-3. **localStorage vs accounts.** Stay on localStorage. Optionally add a "sync
-   code" (Cloudflare KV, ~30 lines, no login) for cross-device. Build real
-   accounts only when a feature genuinely requires identity — social betting
-   would. Do not build auth preemptively.
+3. ~~**localStorage vs accounts.**~~ **Superseded.** This said to stay on
+   localStorage, consider a login-free "sync code", and not build auth
+   preemptively. Pick'em requires identity, which is the condition it named, so
+   the accounts track below settled it the other way on 2026-08-21. Kept because
+   the reasoning still applies to any *future* feature: don't add identity to
+   something that doesn't need it. localStorage remains the store of record until
+   the frontend actually calls `/me/settings`.
 
 ## Requested but not yet built
 
@@ -83,15 +94,24 @@ much as a product decision, so prefer the real thing over a shortcut:
 > Don't re-propose the shortcut. Do flag slippage early, and note that the Google
 > Cloud project and consent screen are Zach-side clicking on the critical path.
 
-1. **Cloudflare D1** (serverless SQLite) as the database. Free tier is far beyond
-   Fixtura's realistic scale (5M row reads/day, 100K writes/day, 5 GB).
-2. **OAuth login** (Google/GitHub) rather than storing password hashes — an
-   explicit preference, since these are people he knows personally. Then auth
-   roles (admin vs regular) and per-user rate limiting.
-3. **Cross-device sync** of favourites/settings — the original motivating use
-   case, and what replaces `localStorage`-only persistence.
+1. ~~**Cloudflare D1** (serverless SQLite) as the database.~~ **Done** — the
+   `fixtura` database exists and `schema.sql` is applied to it. Free tier is far
+   beyond Fixtura's realistic scale (5M row reads/day, 100K writes/day, 5 GB).
+2. **OAuth login** — **built, tested, and deployed 2026-08-22.** Google
+   authorization-code flow, sessions in D1, `admin` granted to the first account
+   to sign in. The routes are live but every one of them 500s with
+   `auth is not configured` until the secrets are set. Still to do: the Google
+   Cloud console setup (Zach-side, on the critical path — consent screen, client
+   id/secret, redirect URIs), the three secrets, and the frontend sign-in UI,
+   which does not exist at all yet. Per-user rate limiting is not built.
+3. **Cross-device sync** of favourites/settings — **worker side built**
+   (`GET|PUT /me/settings`, keyed on the existing `sb-*` names, last-write-wins
+   per key on the server's clock). The frontend does not call it yet; `store()`
+   is still localStorage-only.
 4. **Saved dashboard views**, then **pick'em** (per-user predictions scored over a
-   season — high interest), then **personal stats** over a season.
+   season — high interest), then **personal stats** over a season. `pools` and
+   `picks` are reserved in the router and 404 as "not built yet"; the tables
+   exist, the routes do not.
 5. **Push notifications — someday, explicitly low priority.** iOS Web Push only
    works for a PWA **installed to the home screen**; it will never reach a Safari
    tab. Needs a real `manifest.json` (the current `apple-mobile-web-app-capable`

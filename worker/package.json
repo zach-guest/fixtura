@@ -1,16 +1,22 @@
 {
-  "name": "worker",
+  "name": "fixtura-api",
   "version": "1.0.0",
-  "description": "",
-  "main": "worker.js",
+  "description": "Fixtura API worker \u2014 public proxy lane + private authenticated lane",
+  "main": "src/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "db:schema": "wrangler d1 execute fixtura --remote --file=schema.sql",
+    "db:schema:local": "wrangler d1 execute fixtura --local --file=schema.sql",
+    "types": "wrangler types"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "devDependencies": {
     "wrangler": "^4.125.0"
-  }
+  },
+  "private": true
 }

@@ -5,7 +5,29 @@
       "Bash(curl -s \"https://sports.core.api.espn.com/*)",
       "Bash(curl -s \"https://site.web.api.espn.com/*)",
       "Bash(curl -s \"https://zach-guest.github.io/*)",
-      "Bash(curl -sI \"https://zach-guest.github.io/*)"
+      "Bash(curl -sI \"https://zach-guest.github.io/*)",
+
+      "Bash(node_modules/.bin/wrangler whoami)",
+      "Bash(node_modules/.bin/wrangler types:*)",
+      "Bash(node_modules/.bin/wrangler dev:*)",
+      "Bash(node_modules/.bin/wrangler deploy:*)",
+      "Bash(node_modules/.bin/wrangler tail:*)",
+      "Bash(node_modules/.bin/wrangler versions:*)",
+      "Bash(node_modules/.bin/wrangler d1 execute fixtura --local:*)",
+      "Bash(npx wrangler whoami)",
+      "Bash(npx wrangler types:*)",
+      "Bash(npx wrangler dev:*)",
+      "Bash(npx wrangler deploy:*)",
+      "Bash(npx wrangler tail:*)",
+      "Bash(npx wrangler d1 execute fixtura --local:*)",
+      "Bash(npm run dev)",
+      "Bash(npm run deploy)",
+      "Bash(npm run tail)",
+      "Bash(npm run types)",
+      "Bash(npm run db:schema:local)",
+      "Bash(./test.sh)",
+      "Bash(curl -s \"http://localhost:8787/*)",
+      "Bash(curl -s \"https://fixtura-api.*)"
     ]
   }
 }

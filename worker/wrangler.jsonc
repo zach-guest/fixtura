@@ -1,0 +1,56 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "fixtura-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-21",
+  // Not currently required — no Node built-in is imported — but enabling it up
+  // front means adding a library later does not turn into a confusing runtime
+  // failure about a missing module.
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Workers Caching (the read-through cache in front of the worker) is OFF on
+  // purpose. Caching here is done explicitly by proxy.js through the Cache API,
+  // so the only responses that can ever be stored are the ones that lane
+  // deliberately puts there. With read-through enabled, a private route that
+  // forgot its Cache-Control could be cached by heuristic — and that is exactly
+  // the failure this restructure exists to make impossible.
+  "cache": { "enabled": false },
+
+  // Structured logs, queryable in the dashboard and via `wrangler tail`.
+  // Everything is sampled: Fixtura's traffic is a handful of people, and a
+  // dropped log is the difference between diagnosing a bug and guessing at it.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+
+  // `database_id` is not a secret — it is useless without an authenticated
+  // account — so it is fine in git.
+  "d1_databases": [
+    {
+      "binding": "DB", // available in the worker as env.DB
+      "database_name": "fixtura",
+      "database_id": "8174e0fb-8d36-43e7-bfbf-bbb1cc94244f"
+    }
+  ],
+
+  // Non-secret config. The OAuth *client id* is public by design — it appears
+  // in the URL Google shows the user. The client secret is not here; see below.
+  "vars": {
+    "GOOGLE_CLIENT_ID": "701678996240-gajugi2eu5iebd44e30ia5bj17kg5hjn.apps.googleusercontent.com"
+  }
+
+  // Secrets are NOT in this file — they would end up in git. Set them with:
+  //   npx wrangler secret put GOOGLE_CLIENT_SECRET
+  //   npx wrangler secret put SESSION_SECRET        # any long random string;
+  //                                                 # signs the OAuth state
+  //   npx wrangler secret put ODDS_API_KEY          # only when a keyed
+  //                                                 # provider actually lands
+  //
+  // `GET /health` reports which of these are still missing, by name only.
+  //
+  // After `npx wrangler deploy` the URL looks like
+  //   https://fixtura-api.<subdomain>.workers.dev
+  // which is the value the frontend will point at, and the host that has to be
+  // registered as an authorized redirect URI in the Google console.
+}

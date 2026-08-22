@@ -1,0 +1,5 @@
+# Copy to .dev.vars for `wrangler dev`. Never commit .dev.vars.
+# In production these are set with `npx wrangler secret put <NAME>`.
+GOOGLE_CLIENT_ID = "xxxxxxxx.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = "GOCSPX-xxxxxxxx"
+SESSION_SECRET = "a long random string, e.g. openssl rand -base64 48"

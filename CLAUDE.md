@@ -20,8 +20,10 @@ deploy is a feature, not an accident.
 
 - `index.html` — the entire app, ~2,700 lines. (Re-check with `wc -l` when you edit
   this line; it has been wrong by a thousand lines before.)
-- `worker/` — a Cloudflare Worker API proxy. **Written but never deployed.** The
-  frontend does not reference it. See `DECISIONS.md`.
+- `worker/` — the Cloudflare Worker API, **deployed 2026-08-22** at
+  `https://fixtura-api.fixturaapp.workers.dev`. The frontend does not reference it
+  yet. It has its own section below; `worker/test.sh` is the integration suite.
+  See `DECISIONS.md` for why it exists.
 - `DECISIONS.md` — what was decided and what is planned. Not needed for ordinary
   changes; read it before touching the accounts/betting track.
 
@@ -269,6 +271,88 @@ Checked against a live tournament, 2026-08-21.
   `site.web.api.espn.com/apis/site/v2/sports/golf/{tour}/leaderboard/{event}/playersummary?player={id}`
   — the `season` param the community docs mention is optional.
 
+## The Worker
+
+`worker/` is a separate deployable and the single-file constraint does **not**
+apply to it — that rule is about `index.html`. It is a normal ES-module Worker
+bundled by wrangler, so modules and dependencies are fine here.
+
+**It has two lanes, and the whole file layout exists to keep them apart.**
+
+| Lane | Files | Answer | Cached? |
+|---|---|---|---|
+| PUBLIC | `src/proxy.js` | same for everyone | yes, edge-cached per route TTL |
+| PRIVATE | `src/auth.js`, `src/me.js` | depends who asked | **never**, `no-store` |
+
+The original worker had only the first lane: GET-only, with
+`Cache-Control: public` stamped on every route in its table. Adding `/me` to
+that shape would have edge-cached one person's response and handed it to the
+next person who asked. Four things now make that impossible, and all four are
+load-bearing:
+
+1. `src/http.js` exposes exactly two response constructors, `pub()` and
+   `priv()`. Nothing else builds a `Response`, so a new route cannot forget to
+   declare which kind it is — it has to pick one to return anything.
+2. `PRIVATE_PREFIXES` in `src/index.js` is checked **before** the proxy table,
+   so a private path can never fall through into the cached lane.
+3. A module-scope assertion throws if a proxy route is ever named the same as a
+   private prefix. It fails on deploy rather than silently caching private data.
+4. Workers Caching (the read-through cache) is explicitly **off** in
+   `wrangler.jsonc`. Caching is done by `proxy.js` through the Cache API, so the
+   only things ever stored are the ones that lane deliberately puts there. If
+   that is ever revisited, note the private lane would then rest on `no-store`
+   alone.
+
+Cached entries are stored **without** CORS headers and re-stamped per origin on
+the way out, so one origin's entry can't be replayed to another with the wrong
+`Allow-Origin`. An origin that isn't on the allow-list gets no CORS headers at
+all rather than someone else's.
+
+Auth is Google OAuth (authorization code), then a bearer token of our own —
+Google is asked "who is this?" once, at sign-in, and every request after that
+costs one indexed D1 lookup. Only the SHA-256 of a session token is stored. The
+OAuth `state` is HMAC-signed rather than stored, so it needs no KV namespace and
+no rows to clean up; it carries the return URL, which is checked against the
+allow-list because an open redirect there would hand over the session token.
+
+Routes: `GET /health` (includes a real D1 check and names any missing config),
+`/auth/google/start`, `/auth/google/callback`, `POST /auth/logout`, `GET /me`,
+`GET|PUT /me/settings`. `pools` and `picks` are reserved in the router and 404
+as "not built yet".
+
+```bash
+cd worker
+npm run dev          # local, with a local D1 copy
+./test.sh            # 72 assertions against it — run this after any change
+npm run deploy
+npm run db:schema    # apply schema.sql to the remote D1
+curl https://fixtura-api.fixturaapp.workers.dev/health
+```
+
+`/health` is the first thing to check after any deploy: it reports whether D1 is
+reachable and which secrets are still unset, **by name only**.
+
+The account's workers.dev subdomain is `fixturaapp`, set once at the account
+level, so every Worker deployed from this account is
+`<worker-name>.fixturaapp.workers.dev`; the worker name comes from `name` in
+`wrangler.jsonc`. It was briefly `zacharymguest` and was changed on 2026-08-22
+because **Google's consent screen displays that domain to everyone who signs
+in** — friends joining a pool would have been shown Zach's name. Two things to
+know if it is ever changed again: the old URL dies immediately, and the new one
+needs a `wrangler deploy` to attach the route plus a few minutes for Cloudflare
+to issue the `*.<subdomain>.workers.dev` certificate. During that gap the host
+resolves in DNS but refuses the TLS handshake outright — `curl` exit 35, "no
+peer certificate available" — which looks like a broken deploy and is not one.
+The redirect URI registered with Google has to change with it.
+
+Note the onboarding URL wrangler prints when no subdomain exists is dead; the
+setting lives on the Workers & Pages page under **Your subdomain**.
+
+Secrets (`GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`) are set with
+`npx wrangler secret put`, never in the config. Local dev reads `.dev.vars`
+(gitignored; copy `.dev.vars.example`). `worker-configuration.d.ts` is generated
+by `npm run types` and gitignored.
+
 ## Data sources
 
 All public, all keyless, all called straight from the browser.
@@ -440,6 +524,17 @@ Each was a real bug found in testing. All are non-obvious and easy to reintroduc
     and `users.name`, which are the first genuinely attacker-controlled text this app
     will render, into a leaderboard *other people* see. Use `esc()` without exception,
     and prefer `textContent` when writing a bare name into an existing node.
+
+18. **ESPN 403s a server-side request based on its User-Agent.** The browser is fine
+    — this only bites the Worker, which is why it was never noticed. ESPN sits behind
+    Akamai, and a bare product token is refused: measured 2026-08-21, `Fixtura/1.0`
+    and `Fixtura/1.0 (personal sports dashboard)` both got 403 on 3/3 attempts, as did
+    a short spoofed `Mozilla/5.0`. What passes is the conventional crawler form,
+    product/version plus a contact URL —
+    `Fixtura/1.0 (+https://zach-guest.github.io/fixtura/)` — verified 200 on 3/3
+    against all five upstreams. The pre-restructure `worker.js` sent one of the
+    blocked strings, so every ESPN call would have failed the day it was deployed.
+    It is deterministic, not rate limiting: re-probe before changing it.
 
 ## Known limitations
 
