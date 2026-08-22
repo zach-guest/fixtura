@@ -25,6 +25,7 @@ import { corsHeaders, preflight, priv, ApiError, notFound } from './http.js';
 import { ROUTES, isProxyRoute, handleProxy } from './proxy.js';
 import { handleAuth } from './auth.js';
 import { handleMe } from './me.js';
+import { handlePools } from './pools.js';
 
 /**
  * Path prefixes that are per-user. A request whose first segment is on this
@@ -55,10 +56,12 @@ export default {
       if (head === 'health') return health(env, origin);
 
       if (PRIVATE_PREFIXES.has(head)) {
-        if (head === 'auth') return await handleAuth(request, segments, env, ctx, origin);
-        if (head === 'me')   return await handleMe(request, segments, env, ctx, origin);
-        // pools / picks are reserved here so they cannot be mistaken for a
-        // proxy route while they are being built.
+        if (head === 'auth')  return await handleAuth(request, segments, env, ctx, origin);
+        if (head === 'me')    return await handleMe(request, segments, env, ctx, origin);
+        if (head === 'pools') return await handlePools(request, segments, env, ctx, origin);
+        // `picks` stays reserved so it can never be mistaken for a proxy route.
+        // Everything pick'em-related lives under /pools, since a pick only means
+        // anything inside a pool.
         throw notFound(`${head} is not built yet`);
       }
 

@@ -336,13 +336,48 @@ allow-list because an open redirect there would hand over the session token.
 
 Routes: `GET /health` (includes a real D1 check and names any missing config),
 `/auth/google/start`, `/auth/google/callback`, `POST /auth/logout`, `GET /me`,
-`GET|PUT /me/settings`. `pools` and `picks` are reserved in the router and 404
-as "not built yet".
+`GET|PUT /me/settings`, and pick'em under `/pools` (see below). `picks` stays
+reserved in the router so it can never become a proxy route, but everything
+pick'em-related lives under `/pools` — a pick only means anything inside a pool.
+
+### Pick'em (`src/pools.js`)
+
+`POST /pools`, `GET /pools`, `POST /pools/join`, `GET /pools/:id`,
+`GET /pools/:id/week/:n` (`n` may be `current`), `PUT /pools/:id/picks`,
+`GET /pools/:id/standings`.
+
+**Two rules carry the whole feature, and both are enforced in the worker because
+a rule enforced in the UI is not a rule:**
+
+1. **Kickoff times come from ESPN, never from the client.** `picks.locks_at`
+   exists so a late pick can be rejected without a network call — but if the
+   client supplied it, anyone could send a far-future value and pick after the
+   game started. `weekGames()` fetches the scoreboard and is the only authority
+   on what is playable, who is playing, when it starts, and who won. It is also
+   what validates that the selected team is actually *in* that game.
+2. **A pick is invisible until its game starts.** Other people's picks for
+   unlocked games are dropped from the JSON in `weekView()`, not hidden at
+   render time — anything sent to the browser can be read in devtools.
+
+Both are covered by tests that would fail loudly if either regressed.
+
+Scoring is **lazy, on read** of `/standings`: any final game with no `results`
+row gets one, then the tally runs. No cron trigger, nothing running when nobody
+is looking. `results` is deliberately separate from `picks`, so re-scoring a week
+is a delete-and-reinsert that never touches what anyone actually picked.
+
+Only `su` (straight up) can be created; other modes are rejected at creation
+rather than silently producing a pool nothing can score. `mode` is immutable per
+pool, so new modes are additive later.
+
+`getJSON()` in `proxy.js` is what the private lane uses to read ESPN — it exists
+so the User-Agent (hard-won detail 18) and the edge caching are not duplicated.
 
 ```bash
 cd worker
 npm run dev          # local, with a local D1 copy
-./test.sh            # 72 assertions against it — run this after any change
+./test.sh            # 115 assertions against it — run this after any change
+KEEP=1 ./test.sh     # ... and leave the responses on disk when one fails
 npm run deploy
 npm run db:schema    # apply schema.sql to the remote D1
 curl https://fixtura-api.fixturaapp.workers.dev/health

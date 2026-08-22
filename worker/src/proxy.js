@@ -48,6 +48,49 @@ export function isProxyRoute(name) {
 }
 
 /**
+ * Fetch and parse JSON from an upstream, edge-cached, for code running *inside*
+ * the worker rather than proxying a caller's request.
+ *
+ * This exists so the private lane can read ESPN without duplicating the two
+ * things that are easy to get wrong: the User-Agent (see the note below — a bare
+ * token gets a 403) and the cache handling. Pick'em needs kickoff times, and it
+ * must read them itself rather than believe a client.
+ *
+ * The cache makes it nearly free: a pool submitting picks all evening shares one
+ * upstream call per 30 seconds.
+ */
+export async function getJSON(url, ttl, ctx) {
+  const cache = caches.default;
+  const key = new Request(url, { method: 'GET' });
+
+  const hit = await cache.match(key);
+  if (hit) return await hit.json();
+
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { 'User-Agent': UPSTREAM_UA, Accept: 'application/json' },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new ApiError(502, 'upstream fetch failed', { upstream: url, cause: String(err) });
+  }
+  if (!res.ok) throw new ApiError(502, 'upstream returned an error', { upstream: url, status: res.status });
+
+  const body = await res.text();
+  if (ctx) {
+    ctx.waitUntil(cache.put(key, new Response(body, {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${ttl}` },
+    })));
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new ApiError(502, 'upstream did not return JSON', { upstream: url });
+  }
+}
+
+/**
  * @param {Request} request
  * @param {string[]} segments  path split on '/', segments[0] is the route name
  */

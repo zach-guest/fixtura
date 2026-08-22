@@ -25,13 +25,20 @@ APP=https://zach-guest.github.io
 WRANGLER=node_modules/.bin/wrangler
 pass=0; fail=0
 T=$(mktemp -d)
-trap 'rm -rf "$T"' EXIT
+# KEEP=1 ./test.sh leaves the responses on disk. Worth it: a bare status code
+# tells you a test failed, not why.
+[ -n "${KEEP:-}" ] && echo "responses kept in $T" || trap 'rm -rf "$T"' EXIT
 
 chk(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); printf '  ok   %-50s %s\n' "$1" "$3"
        else fail=$((fail+1)); printf '  FAIL %-50s want=%s got=%s\n' "$1" "$2" "$3"; fi; }
 hdr(){ grep -i "^$2:" "$1" | head -1 | cut -d' ' -f2- | tr -d '\r'; }
 code(){ head -1 "$1" | awk '{print $2}'; }
-jq_(){ F="$1" EXPR="$2" python3 -c 'import json,os;d=json.load(open(os.environ["F"]));print(eval("d"+os.environ["EXPR"]))' 2>/dev/null; }
+# Accepts either a subscript chain applied to the document ("['pool']['id']")
+# or a full expression that uses `d` itself ("len(d['games'])").
+jq_(){ F="$1" EXPR="$2" python3 -c 'import json,os
+d=json.load(open(os.environ["F"]))
+e=os.environ["EXPR"]
+print(eval(("d"+e) if e.startswith("[") else e))' 2>/dev/null; }
 qs(){ L="$1" K="$2" python3 -c 'import os,urllib.parse as u;print(u.parse_qs(u.urlparse(os.environ["L"]).query)[os.environ["K"]][0])'; }
 
 if ! curl -sf -o /dev/null "$B/health"; then
@@ -130,16 +137,44 @@ chk "  carries a request id" "yes" "$([ -n "$(hdr $T/n4 x-fixtura-request-id)" ]
 # --------------------------------------------------------------------------
 # Authenticated. Seeds the local D1 the way a completed Google login would.
 # --------------------------------------------------------------------------
-TOKEN=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')
-HASH=$(printf '%s' "$TOKEN" | shasum -a 256 | cut -d' ' -f1)
+# Seed everything in ONE pass, before any authenticated request.
+#
+# This matters: `wrangler d1 execute --local` writes to the same SQLite file the
+# running `wrangler dev` holds open, and a write issued *between* HTTP calls is
+# not reliably visible to the worker straight away. Seeding mid-run produced
+# tests that passed or 401'd depending on timing. Seed once, then wait until the
+# worker can actually see it.
+h(){ printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1; }
+mktok(){ openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'; }
+TOKEN=$(mktok)        # user A, spent by the logout test
+TOKEN_A=$(mktok)      # user A, for pick'em
+TOKEN_B=$(mktok)      # user B
+TOKEN_X=$(mktok)      # user A, seeded already-expired
 NOW=$(date +%s); EXP=$((NOW + 2592000))
 $WRANGLER d1 execute fixtura --local --command \
-"DELETE FROM sessions; DELETE FROM settings; DELETE FROM users;
+"DELETE FROM results; DELETE FROM picks; DELETE FROM pool_members; DELETE FROM pools;
+ DELETE FROM sessions; DELETE FROM settings; DELETE FROM users;
  INSERT INTO users (provider,sub,email,name,picture,role,created_at,last_seen)
  VALUES ('google','test-sub-1','zach@example.com','Zach Guest',NULL,'admin',$NOW,$NOW);
+ INSERT INTO users (provider,sub,email,name,picture,role,created_at,last_seen)
+ VALUES ('google','test-sub-2','friend@example.com','Friend B',NULL,'user',$NOW,$NOW);
  INSERT INTO sessions (token_hash,user_id,created_at,expires_at,user_agent)
- VALUES ('$HASH',(SELECT id FROM users WHERE sub='test-sub-1'),$NOW,$EXP,'test.sh');" >/dev/null 2>&1
+ VALUES ('$(h "$TOKEN")',  (SELECT id FROM users WHERE sub='test-sub-1'),$NOW,$EXP,'test.sh');
+ INSERT INTO sessions (token_hash,user_id,created_at,expires_at,user_agent)
+ VALUES ('$(h "$TOKEN_A")',(SELECT id FROM users WHERE sub='test-sub-1'),$NOW,$EXP,'test.sh');
+ INSERT INTO sessions (token_hash,user_id,created_at,expires_at,user_agent)
+ VALUES ('$(h "$TOKEN_B")',(SELECT id FROM users WHERE sub='test-sub-2'),$NOW,$EXP,'test.sh');
+ INSERT INTO sessions (token_hash,user_id,created_at,expires_at,user_agent)
+ VALUES ('$(h "$TOKEN_X")',(SELECT id FROM users WHERE sub='test-sub-1'),$NOW,$((NOW-10)),'expired');" > $T/seed.log 2>&1 \
+  || { echo "SEED FAILED — the rest of this run is meaningless:"; tail -20 $T/seed.log; exit 1; }
 A="Authorization: Bearer $TOKEN"
+A2="Authorization: Bearer $TOKEN_A"
+B_AUTH="Authorization: Bearer $TOKEN_B"
+# Wait for the worker to see the seed rather than assuming it does.
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/me" -H "$A2")" = "200" ] && break
+  sleep 1
+done
 
 echo "== signed in =="
 curl -s -D $T/a1 -o $T/a1b "$B/me" -H "Origin: $APP" -H "$A"
@@ -187,12 +222,139 @@ curl -s -D $T/l2 -o /dev/null "$B/me" -H "Origin: $APP" -H "$A"
 chk "  token is dead afterwards" 401 "$(code $T/l2)"
 curl -s -D $T/l3 -o /dev/null -X POST "$B/auth/logout" -H "Origin: $APP" -H "$A"
 chk "  logging out twice is fine" 200 "$(code $T/l3)"
-$WRANGLER d1 execute fixtura --local --command \
-"INSERT INTO sessions (token_hash,user_id,created_at,expires_at,user_agent)
- VALUES ('$HASH',(SELECT id FROM users WHERE sub='test-sub-1'),$NOW,$((NOW-10)),'expired');" >/dev/null 2>&1
-curl -s -D $T/e1 -o /dev/null "$B/me" -H "Origin: $APP" -H "$A"
+curl -s -D $T/e1 -o /dev/null "$B/me" -H "Origin: $APP" -H "Authorization: Bearer $TOKEN_X"
 chk "an expired row cannot authenticate" 401 "$(code $T/e1)"
 
+
+# --------------------------------------------------------------------------
+# Pick'em. Uses two real test data sets, on purpose:
+#   season 2026 week 1 — 16 games, all still upcoming  -> picking, privacy
+#   season 2025 week 1 — 16 games, all final           -> the lock, scoring
+# --------------------------------------------------------------------------
+jpost(){ curl -s -o "$2" -w '%{http_code}' -X "$3" "$B$1" -H "Origin: $APP" -H "$4" \
+         -H 'Content-Type: application/json' -d "$5"; }
+
+echo "== pools: creating and joining =="
+code=$(jpost /pools $T/pc POST "$A2" '{"name":"Sunday Money","season":2026,"league":"nfl"}')
+chk "create" 201 "$code"
+POOL=$(jq_ $T/pc "['pool']['id']"); JOIN=$(jq_ $T/pc "['pool']['join_code']")
+chk "  mode is straight up" "su" "$(jq_ $T/pc "['pool']['mode']")"
+chk "  join code is 6 chars" 6 "$(printf %s "$JOIN" | wc -c | tr -d ' ')"
+curl -s -o $T/pl "$B/pools" -H "Origin: $APP" -H "$A2"
+chk "owner sees it listed" 1 "$(jq_ $T/pl "len(d['pools'])")"
+chk "  and is the only member" 1 "$(jq_ $T/pl "d['pools'][0]['members']")"
+
+curl -s -D $T/nm -o /dev/null "$B/pools/$POOL" -H "Origin: $APP" -H "$B_AUTH"
+chk "a non-member is refused" 403 "$(code $T/nm)"
+chk "join with the code" 200 "$(jpost /pools/join $T/pj POST "$B_AUTH" "{\"code\":\"$JOIN\"}")"
+chk "joining twice is fine" 200 "$(jpost /pools/join $T/pj POST "$B_AUTH" "{\"code\":\"$JOIN\"}")"
+curl -s -o $T/pd "$B/pools/$POOL" -H "Origin: $APP" -H "$A2"
+chk "pool now has two members" 2 "$(jq_ $T/pd "len(d['members'])")"
+
+echo "== pools: bad input =="
+chk "empty name"        400 "$(jpost /pools $T/x POST "$A2" '{"name":"   ","season":2026}')"
+chk "unbuilt mode"      400 "$(jpost /pools $T/x POST "$A2" '{"name":"x","mode":"survivor"}')"
+chk "unknown league"    400 "$(jpost /pools $T/x POST "$A2" '{"name":"x","league":"cricket"}')"
+chk "60+ char name"     400 "$(jpost /pools $T/x POST "$A2" "{\"name\":\"$(python3 -c 'print("z"*61)')\"}")"
+chk "bad join code"     404 "$(jpost /pools/join $T/x POST "$A2" '{"code":"ZZZZZZ"}')"
+
+echo "== the week view =="
+curl -s -o $T/wk "$B/pools/$POOL/week/1" -H "Origin: $APP" -H "$A2"
+chk "16 games in week 1" 16 "$(jq_ $T/wk "len(d['games'])")"
+chk "  none locked yet" 0 "$(jq_ $T/wk "len([g for g in d['games'] if g['locked']])")"
+chk "  kickoff came from ESPN" True "$(jq_ $T/wk "d['games'][0]['kickoff'] > 1780000000")"
+G1=$(jq_ $T/wk "d['games'][0]['id']"); H1=$(jq_ $T/wk "d['games'][0]['home']['id']")
+A1=$(jq_ $T/wk "d['games'][0]['away']['id']")
+G2=$(jq_ $T/wk "d['games'][1]['id']"); H2=$(jq_ $T/wk "d['games'][1]['home']['id']")
+
+echo "== submitting picks =="
+# Build the body in a variable. Escaped JSON inside "$( ... )" with a line
+# continuation does not survive the shell intact, and the symptom is a confusing
+# "body must be JSON" from the worker rather than a shell error.
+PICKS2="{\"week\":1,\"picks\":[{\"event_id\":\"$G1\",\"selection_id\":\"$H1\"},{\"event_id\":\"$G2\",\"selection_id\":\"$H2\"}]}"
+chk "valid picks accepted" 200 "$(jpost /pools/$POOL/picks $T/sp PUT "$A2" "$PICKS2")"
+chk "  both saved" 2 "$(jq_ $T/sp "len(d['saved'])")"
+chk "  none rejected" 0 "$(jq_ $T/sp "len(d['rejected'])")"
+jpost /pools/$POOL/picks $T/sp2 PUT "$A2" \
+  "{\"week\":1,\"picks\":[{\"event_id\":\"$G1\",\"selection_id\":\"$A1\"}]}" >/dev/null
+curl -s -o $T/wk2 "$B/pools/$POOL/week/1" -H "Origin: $APP" -H "$A2"
+chk "changing a pick overwrites it" "$A1" "$(jq_ $T/wk2 "d['myPicks']['$G1']")"
+
+echo "== picks the server must refuse =="
+jpost /pools/$POOL/picks $T/r1 PUT "$A2" \
+  "{\"week\":1,\"picks\":[{\"event_id\":\"$G1\",\"selection_id\":\"999999\"}]}" >/dev/null
+chk "a team not in the game" "that team is not in this game" "$(jq_ $T/r1 "d['rejected'][0]['why']")"
+jpost /pools/$POOL/picks $T/r2 PUT "$A2" \
+  "{\"week\":1,\"picks\":[{\"event_id\":\"1\",\"selection_id\":\"$H1\"}]}" >/dev/null
+chk "an event not in the week" "not a game in this week" "$(jq_ $T/r2 "d['rejected'][0]['why']")"
+chk "no picks at all" 400 "$(jpost /pools/$POOL/picks $T/x PUT "$A2" '{"week":1,"picks":[]}')"
+chk "a nonsense week" 400 "$(jpost /pools/$POOL/picks $T/x PUT "$A2" '{"week":99,"picks":[{"event_id":"1","selection_id":"1"}]}')"
+SOLO=$(jq_ <(jpost /pools $T/solo POST "$A2" '{"name":"A only","season":2026}' >/dev/null; cat $T/solo) "['pool']['id']")
+chk "a non-member submitting to a real pool" 403 "$(jpost /pools/$SOLO/picks $T/x PUT "$B_AUTH" '{"week":1,"picks":[{"event_id":"1","selection_id":"1"}]}')"
+chk "a pool that does not exist is a 404, not a 403" 404 "$(jpost /pools/999999/picks $T/x PUT "$A2" '{"week":1,"picks":[{"event_id":"1","selection_id":"1"}]}')"
+
+echo "== THE LOCK: a finished week cannot be picked =="
+old=$(jpost /pools $T/op POST "$A2" '{"name":"Last Season","season":2025,"league":"nfl"}')
+OLDPOOL=$(jq_ $T/op "['pool']['id']")
+jpost /pools/join $T/oj POST "$B_AUTH" "{\"code\":\"$(jq_ $T/op "['pool']['join_code']")\"}" >/dev/null
+curl -s -o $T/ow "$B/pools/$OLDPOOL/week/1" -H "Origin: $APP" -H "$A2"
+chk "every 2025 game reads as locked" 16 "$(jq_ $T/ow "len([g for g in d['games'] if g['locked']])")"
+OG=$(jq_ $T/ow "d['games'][0]['id']"); OH=$(jq_ $T/ow "d['games'][0]['home']['id']")
+jpost /pools/$OLDPOOL/picks $T/ol PUT "$A2" \
+  "{\"week\":1,\"picks\":[{\"event_id\":\"$OG\",\"selection_id\":\"$OH\"}]}" >/dev/null
+chk "the pick is refused" 0 "$(jq_ $T/ol "len(d['saved'])")"
+chk "  and says why" "that game has already started" "$(jq_ $T/ol "d['rejected'][0]['why']")"
+chk "  nothing reached the database" 0 "$($WRANGLER d1 execute fixtura --local --json \
+  --command "SELECT COUNT(*) AS n FROM picks WHERE pool_id=$OLDPOOL" 2>/dev/null \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)[0]["results"][0]["n"])' 2>/dev/null || echo ERR)"
+
+echo "== PRIVACY: an unlocked pick is invisible to everyone else =="
+jpost /pools/$POOL/picks $T/bp PUT "$B_AUTH" \
+  "{\"week\":1,\"picks\":[{\"event_id\":\"$G1\",\"selection_id\":\"$H1\"},{\"event_id\":\"$G2\",\"selection_id\":\"$H2\"}]}" >/dev/null
+chk "B's picks saved" 2 "$(jq_ $T/bp "len(d['saved'])")"
+curl -s -o $T/av "$B/pools/$POOL/week/1" -H "Origin: $APP" -H "$A2"
+chk "A still sees A's own picks" True "$(jq_ $T/av "len(d['myPicks']) >= 2")"
+chk "A sees NO other picks" 0 "$(jq_ $T/av "len(d['picks'])")"
+BID=$($WRANGLER d1 execute fixtura --local --json --command \
+  "SELECT id FROM users WHERE sub='test-sub-2'" 2>/dev/null \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)[0]["results"][0]["id"])' 2>/dev/null)
+chk "B's user id appears nowhere in the payload" "False" \
+  "$(python3 -c "import json;d=json.load(open('$T/av'));print(str($BID) in json.dumps(d['picks']))")"
+chk "  (B is still listed as a member)" True "$(jq_ $T/av "len(d['members'])==2")"
+
+echo "== standings and scoring =="
+# Seed a finished week directly: A picks every winner, B picks every loser.
+python3 - "$OLDPOOL" "$NOW" > $T/seed.sql <<'PY'
+import sys,json,urllib.request
+pool,now=sys.argv[1],sys.argv[2]
+u="https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2025&seasontype=2&week=1"
+r=urllib.request.Request(u,headers={"User-Agent":"Fixtura/1.0 (+https://zach-guest.github.io/fixtura/)"})
+d=json.load(urllib.request.urlopen(r))
+out=[]
+for e in d["events"]:
+    c=e["competitions"][0]; cs=c["competitors"]
+    w=[x for x in cs if x.get("winner")]
+    if not w: continue
+    win=w[0]["team"]["id"]; lose=[x for x in cs if x["team"]["id"]!=win][0]["team"]["id"]
+    for sub,sel in (("test-sub-1",win),("test-sub-2",lose)):
+        out.append(f"INSERT OR REPLACE INTO picks (pool_id,user_id,event_id,week,selection_id,locks_at,created_at,updated_at) "
+                   f"VALUES ({pool},(SELECT id FROM users WHERE sub='{sub}'),'{e['id']}',1,'{sel}',0,{now},{now});")
+print("\n".join(out))
+PY
+$WRANGLER d1 execute fixtura --local --file=$T/seed.sql >/dev/null 2>&1
+curl -s -o $T/st "$B/pools/$OLDPOOL/standings" -H "Origin: $APP" -H "$A2"
+chk "everyone appears" 2 "$(jq_ $T/st "len(d['standings'])")"
+chk "the winner picker is 16-0" "16 0" "$(jq_ $T/st "str(d['standings'][0]['wins'])+' '+str(d['standings'][0]['losses'])")"
+chk "  at 100%" 100 "$(jq_ $T/st "d['standings'][0]['pct']")"
+chk "the loser picker is 0-16" "0 16" "$(jq_ $T/st "str(d['standings'][1]['wins'])+' '+str(d['standings'][1]['losses'])")"
+chk "  at 0%" 0 "$(jq_ $T/st "d['standings'][1]['pct']")"
+chk "results were written once per game" 16 "$($WRANGLER d1 execute fixtura --local --json \
+  --command "SELECT COUNT(*) AS n FROM results WHERE pool_id=$OLDPOOL" 2>/dev/null \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)[0]["results"][0]["n"])' 2>/dev/null || echo ERR)"
+curl -s -o $T/st2 "$B/pools/$OLDPOOL/standings" -H "Origin: $APP" -H "$A2"
+chk "re-scoring is idempotent" 16 "$($WRANGLER d1 execute fixtura --local --json \
+  --command "SELECT COUNT(*) AS n FROM results WHERE pool_id=$OLDPOOL" 2>/dev/null \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)[0]["results"][0]["n"])' 2>/dev/null || echo ERR)"
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

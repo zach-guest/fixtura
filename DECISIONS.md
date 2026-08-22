@@ -108,10 +108,18 @@ much as a product decision, so prefer the real thing over a shortcut:
    (`GET|PUT /me/settings`, keyed on the existing `sb-*` names, last-write-wins
    per key on the server's clock). The frontend does not call it yet; `store()`
    is still localStorage-only.
-4. **Saved dashboard views**, then **pick'em** (per-user predictions scored over a
-   season — high interest), then **personal stats** over a season. `pools` and
-   `picks` are reserved in the router and 404 as "not built yet"; the tables
-   exist, the routes do not.
+4. **Pick'em** — **server side built, tested and deployed 2026-08-22**, straight
+   up only. Create/join pools, submit and change picks, per-game locking, and
+   lazily-scored standings. Verified in production against real ESPN data, both
+   an upcoming week and a finished one. Settled with Zach: **picks lock per game
+   at its own kickoff**, and **a pick is hidden from everyone else until that
+   game locks**. Still to build: the pick'em UI, which is the part most likely to
+   eat the remaining schedule. Then **saved dashboard views** and **personal
+   stats** over a season.
+   Other modes (`confidence`, `survivor`, `ats`, `golf6`, `f1podium`) are
+   deliberately deferred until after Week 1 — `mode` is fixed per pool, so each
+   is a new pool and nothing existing changes. `ats` additionally needs the line
+   snapshotted at pick time; the odds are already on the scoreboard payload.
 5. **Push notifications — someday, explicitly low priority.** iOS Web Push only
    works for a PWA **installed to the home screen**; it will never reach a Safari
    tab. Needs a real `manifest.json` (the current `apple-mobile-web-app-capable`
