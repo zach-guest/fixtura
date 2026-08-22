@@ -5,9 +5,7 @@
       "Bash(curl -s \"https://sports.core.api.espn.com/*)",
       "Bash(curl -s \"https://site.web.api.espn.com/*)",
       "Bash(curl -s \"https://zach-guest.github.io/*)",
-      "Bash(curl -sI \"https://zach-guest.github.io/*)",
-      "mcp__Claude_Browser__tabs_context",
-      "mcp__Claude_Browser__read_console_messages"
+      "Bash(curl -sI \"https://zach-guest.github.io/*)"
     ]
   }
 }
