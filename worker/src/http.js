@@ -25,7 +25,7 @@ export const ALLOWED_ORIGINS = [
 ];
 
 /** Methods a browser may preflight. The private lane needs more than GET. */
-const ALLOW_METHODS = 'GET,POST,PUT,DELETE,OPTIONS';
+const ALLOW_METHODS = 'GET,POST,PUT,PATCH,DELETE,OPTIONS';
 const ALLOW_HEADERS = 'Content-Type,Authorization';
 
 /**

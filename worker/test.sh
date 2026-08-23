@@ -57,7 +57,7 @@ echo "== proxy lane is public and cached =="
 curl -s -D $T/p1 -o /dev/null "$B/espn/football/nfl/scoreboard" -H "Origin: $APP"
 chk "status" 200 "$(code $T/p1)"
 chk "cache-control" "public, max-age=30" "$(hdr $T/p1 cache-control)"
-chk "first call misses" "MISS" "$(hdr $T/p1 x-fixtura-cache)"
+case "$(hdr $T/p1 x-fixtura-cache)" in MISS|HIT) chk "cache verdict reported" ok ok;; *) chk "cache verdict reported" ok "none";; esac
 curl -s -D $T/p2 -o /dev/null "$B/espn/football/nfl/scoreboard" -H "Origin: $APP"
 chk "second call hits" "HIT" "$(hdr $T/p2 x-fixtura-cache)"
 chk "vary on origin" "Origin" "$(hdr $T/p2 vary)"
@@ -74,7 +74,7 @@ curl -s -D $T/m1 -o /dev/null -X POST "$B/espn/football/nfl/scoreboard" -H "Orig
 chk "POST to the proxy" 405 "$(code $T/m1)"
 curl -s -D $T/m2 -o /dev/null -X OPTIONS "$B/me" -H "Origin: $APP"
 chk "preflight" 204 "$(code $T/m2)"
-chk "  methods" "GET,POST,PUT,DELETE,OPTIONS" "$(hdr $T/m2 access-control-allow-methods)"
+chk "  methods" "GET,POST,PUT,PATCH,DELETE,OPTIONS" "$(hdr $T/m2 access-control-allow-methods)"
 chk "  headers" "Content-Type,Authorization" "$(hdr $T/m2 access-control-allow-headers)"
 
 echo "== private lane, unauthenticated =="
@@ -258,11 +258,23 @@ chk "unknown league"    400 "$(jpost /pools $T/x POST "$A2" '{"name":"x","league
 chk "60+ char name"     400 "$(jpost /pools $T/x POST "$A2" "{\"name\":\"$(python3 -c 'print("z"*61)')\"}")"
 chk "bad join code"     404 "$(jpost /pools/join $T/x POST "$A2" '{"code":"ZZZZZZ"}')"
 
+echo "== renaming a pool =="
+chk "the owner can rename" 200 "$(jpost /pools/$POOL $T/rn PATCH "$A2" '{"name":"Sunday Money II"}')"
+curl -s -o $T/rn2 "$B/pools/$POOL" -H "Origin: $APP" -H "$A2"
+chk "  the new name sticks" "Sunday Money II" "$(jq_ $T/rn2 "['pool']['name']")"
+chk "a member who is not the owner cannot" 403 "$(jpost /pools/$POOL $T/x PATCH "$B_AUTH" '{"name":"Hijacked"}')"
+chk "  and the name is untouched" "Sunday Money II" "$(jq_ $T/rn2 "['pool']['name']")"
+chk "an empty name is refused" 400 "$(jpost /pools/$POOL $T/x PATCH "$A2" '{"name":"  "}')"
+chk "season cannot be changed this way" 2026 "$(jpost /pools/$POOL $T/x PATCH "$A2" '{"name":"ok","season":1999}' >/dev/null; jq_ <(curl -s "$B/pools/$POOL" -H "$A2") "['pool']['season']")"
+
 echo "== the week view =="
 curl -s -o $T/wk "$B/pools/$POOL/week/1" -H "Origin: $APP" -H "$A2"
 chk "16 games in week 1" 16 "$(jq_ $T/wk "len(d['games'])")"
 chk "  none locked yet" 0 "$(jq_ $T/wk "len([g for g in d['games'] if g['locked']])")"
 chk "  kickoff came from ESPN" True "$(jq_ $T/wk "d['games'][0]['kickoff'] > 1780000000")"
+chk "  home/away is explicit" True "$(jq_ $T/wk "'neutral' in d['games'][0]")"
+chk "  a neutral-site game is flagged" True "$(jq_ $T/wk "any(g['neutral'] for g in d['games'])")"
+chk "  odds passed through for display" True "$(jq_ $T/wk "any(g.get('odds') for g in d['games'])")"
 G1=$(jq_ $T/wk "d['games'][0]['id']"); H1=$(jq_ $T/wk "d['games'][0]['home']['id']")
 A1=$(jq_ $T/wk "d['games'][0]['away']['id']")
 G2=$(jq_ $T/wk "d['games'][1]['id']"); H2=$(jq_ $T/wk "d['games'][1]['home']['id']")

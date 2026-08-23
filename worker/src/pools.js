@@ -61,7 +61,8 @@ export async function handlePools(request, segments, env, ctx, origin) {
   const id = Number(rest[0]);
   if (!Number.isInteger(id) || id <= 0) throw notFound('unknown pools route');
 
-  if (rest.length === 1 && m === 'GET') return poolDetail(env, user, id, origin);
+  if (rest.length === 1 && m === 'GET')   return poolDetail(env, user, id, origin);
+  if (rest.length === 1 && m === 'PATCH') return renamePool(request, env, user, id, origin);
   if (rest[1] === 'week' && rest.length === 3 && m === 'GET')
     return weekView(env, ctx, user, id, rest[2], origin);
   if (rest[1] === 'picks' && rest.length === 2 && m === 'PUT')
@@ -138,11 +139,19 @@ async function weekGames(ctx, pool, week) {
     const state = (c.status && c.status.type && c.status.type.state) || 'pre';
     const kickoff = Math.floor(new Date(e.date).getTime() / 1000);
     const winner = state === 'post' ? (home.winner ? home.id : away.winner ? away.id : null) : null;
+    // A neutral-site game has no real home team, so the UI must not claim one.
+    // ESPN says so explicitly; do not infer it from shortName containing "VS".
+    const neutral = !!c.neutralSite;
+    const o = (c.odds && c.odds[0]) || null;
     return {
       id: String(e.id),
       shortName: e.shortName || '',
       date: e.date,
       kickoff,
+      neutral,
+      // Passed through for display only. Nothing here is used for scoring — a
+      // straight-up pool is decided by who won, and the line is just context.
+      odds: o ? { details: o.details || '', overUnder: o.overUnder === undefined ? null : o.overUnder } : null,
       // A game is locked once it starts. ESPN's own state is checked too, because
       // a game can start early or a clock can be wrong, and the state is the fact.
       locked: state !== 'pre' || kickoff <= t,
@@ -235,6 +244,25 @@ async function poolDetail(env, user, poolId, origin) {
     },
     members: results,
   }, { origin });
+}
+
+/**
+ * Rename a pool. The name is the only thing about a pool that is safe to change:
+ * league, season and mode would all reinterpret picks that already exist, which
+ * is why they are absent here rather than merely undocumented.
+ *
+ * Owner only. Everyone in the pool sees this name, so it is not a per-member
+ * preference and it is not something a member should be able to change under
+ * everyone else.
+ */
+async function renamePool(request, env, user, poolId, origin) {
+  const pool = await memberPool(env, user, poolId);
+  if (pool.owner_id !== user.id) throw forbidden('only the person who made the pool can rename it');
+
+  const b = await body(request);
+  const name = cleanName(b.name);
+  await env.DB.prepare('UPDATE pools SET name = ? WHERE id = ?').bind(name, poolId).run();
+  return priv({ pool: { id: pool.id, name } }, { origin });
 }
 
 /* ------------------------------------------------------------------- picks */

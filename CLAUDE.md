@@ -213,6 +213,19 @@ re-render by assigning `innerHTML` and re-wiring handlers.
     - `pkNotesHTML()` is separate from `pkPicksHTML()` so a tap can refresh the
       "still to pick" count in place; re-rendering the list would jump you back to
       the top of a 16-game week.
+    - Home/away is shown as `away @ home`, and **`vs` at a neutral site** — ESPN
+      flags `neutralSite` explicitly, so don't infer it from `shortName`
+      containing "VS". Each button carries a `title` spelling it out.
+    - The betting line is display-only and **off by default** (`sb-pk-odds`, per
+      device). It is never used for scoring — a straight-up pool is decided by who
+      won. It is also the groundwork for an `ats` pool later.
+    - `details` on each row opens the ordinary game modal via `openGame(id, league)`
+      — a pool's `league` is already a `LEAGUES` key, so nothing needs translating.
+    - Renaming is owner-only and the name is the **only** mutable field on a pool.
+      League, season and mode would all reinterpret existing picks, which is why
+      `renamePool()` ignores them rather than merely not documenting them.
+    - The create/join screen keeps `pkPool` set so it can offer a way back. It
+      shipped without one and the only escape was reloading the page.
 - **Drive view** (football only) — a `Drive` tab in the game modal: a
   hover-readable win-probability chart, an animated 100-yard field with
   team-coloured end zones, and an expandable drive list naming the scorer on each

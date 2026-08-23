@@ -357,9 +357,26 @@
   .pkgames{display:flex;flex-direction:column;gap:8px}
   .pkgame{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 11px}
   .pkgame.locked{opacity:.82}
-  .pkwhen{font-family:'Roboto Mono',monospace;font-size:10px;color:var(--dim-2);
+  .pkwhen{display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+    font-family:'Roboto Mono',monospace;font-size:10px;color:var(--dim-2);
     text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
-  .pkteams{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .pkodds{color:var(--dim);letter-spacing:.5px}
+  .pkinfo{margin-left:auto;background:none;border:0;color:var(--dim-2);
+    font-family:'Roboto Mono',monospace;font-size:10px;letter-spacing:1px;
+    text-transform:uppercase;text-decoration:underline;text-underline-offset:2px;padding:0}
+  .pkinfo:hover{color:var(--accent)}
+  .pkteams{display:grid;grid-template-columns:1fr auto 1fr;gap:7px;align-items:center}
+  .pkat{font-family:'Roboto Mono',monospace;font-size:10.5px;color:var(--dim-2);
+    text-transform:uppercase;letter-spacing:.5px}
+  .pkheadmain{min-width:0}
+  .pkname{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .pkname input{background:var(--panel-2);border:1px solid var(--accent-dim);color:var(--text);
+    border-radius:7px;padding:5px 9px;font-size:14px;font-family:inherit;font-weight:700;max-width:220px}
+  .pkname input:focus{outline:none}
+  .pkrename{background:none;border:0;color:var(--dim-2);font-family:'Roboto Mono',monospace;
+    font-size:10px;letter-spacing:1px;text-transform:uppercase;text-decoration:underline;
+    text-underline-offset:2px;padding:0;font-weight:400}
+  .pkrename:hover{color:var(--accent)}
   .pkteam{display:flex;align-items:center;gap:7px;background:var(--panel-2);border:1px solid var(--line);
     color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px;font-weight:600;
     text-align:left;min-width:0;transition:border-color .12s,background .12s}
@@ -531,7 +548,7 @@ let gameRosters=null,venueHTML=null,autoRefresh=true,showCfg=false;
 let MY_TEAMS=[],FAV_NAMES=[],TICKER_LEAGUES=[];
 let calMonth=new Date(),calCache=null,f1Season=null,f1Open={};
 let me=null,authToken=null,authExp=0,authMenu=false;
-let pkPools=null,pkPool=null,pkTab='picks',pkWeek=1,pkData=null,pkErr='',pkBusy=false;
+let pkPools=null,pkPool=null,pkTab='picks',pkWeek=1,pkData=null,pkErr='',pkBusy=false,pkOdds=false;
 
 /* ========================= UTIL ========================= */
 const $=s=>document.querySelector(s);
@@ -723,6 +740,7 @@ function initSettings(){
   VIEW_ORDER=(Array.isArray(v)?v:DEFAULT_VIEWS.slice()).filter(k=>VIEW_LABELS[k]);
   if(!VIEW_ORDER.length)VIEW_ORDER=DEFAULT_VIEWS.slice();
   VIEW_ORDER=reconcileViews(VIEW_ORDER);
+  pkOdds=store('sb-pk-odds')==='1';
   const last=store('sb-lastview');
   view=(last&&VIEW_ORDER.indexOf(last)>=0)?last:VIEW_ORDER[0];
   // ?view=golf&tour=lpga — lets a shared link open on a specific view instead of
@@ -2504,7 +2522,13 @@ function pkSignedOutHTML(){
 }
 
 function pkNoPoolsHTML(){
-  return '<div class="panel"><div class="grouplabel" style="margin:0 0 6px">Start a pool</div>'+
+  // If they already belong to a pool, this screen is a detour and needs a way
+  // back — otherwise the only escape is reloading the page, which is what
+  // happened the first time it was used.
+  const back=(pkPools&&pkPools.length)?
+    '<div class="subchips"><button class="chip sm" id="pkBack">‹ Back to '+esc(pkPools[0].name)+'</button></div>':'';
+  return back+
+    '<div class="panel"><div class="grouplabel" style="margin:0 0 6px">Start a pool</div>'+
     '<p class="pktext dim">You pick, your friends pick, the winner is whoever calls the most games.</p>'+
     '<div class="pkform"><input id="pkName" type="text" maxlength="60" placeholder="Pool name" '+
       'value="'+esc((me&&me.name?me.name.split(' ')[0]+'’s':'Sunday')+' Pool')+'">'+
@@ -2518,18 +2542,23 @@ function pkNoPoolsHTML(){
 }
 
 function pkShellHTML(){
-  const tabs=[['picks','My picks'],['pool','Everyone'],['standings','Standings']];
-  return (pkPools.length>1||true?'<div class="subchips pkbar">'+
+  const tabs=[['picks','My picks'],['pool','All picks'],['standings','Standings']];
+  const owner=me&&pkPool.owner_id===me.id;
+  return '<div class="subchips pkbar">'+
       pkPools.map(p=>'<button class="chip sm '+(pkPool&&p.id===pkPool.id?'on':'')+'" data-pkp="'+p.id+'">'+
         esc(p.name)+'</button>').join('')+
-      '<button class="chip sm" data-pkp="new">+ New / join</button></div>':'')+
-    '<div class="pkhead"><div><div class="pkname">'+esc(pkPool.name)+'</div>'+
+      '<button class="chip sm" data-pkp="new">+ New / join</button></div>'+
+    '<div class="pkhead"><div class="pkheadmain">'+
+      '<div class="pkname" id="pkNameLbl">'+esc(pkPool.name)+
+        (owner?'<button class="pkrename" id="pkRename" title="Rename this pool">rename</button>':'')+'</div>'+
       '<div class="pkmeta">'+esc(String(pkPool.season))+' · '+esc((pkPool.league||'').toUpperCase())+
       ' · straight up · '+esc(String(pkPool.members||1))+' '+((pkPool.members||1)===1?'player':'players')+'</div></div>'+
       '<button class="chip sm pkcode" id="pkCopy" title="Copy the join code">'+esc(pkPool.join_code||'')+'</button></div>'+
     '<div class="pkweek"><button class="chip sm" id="pkPrev"'+(pkWeek<=1?' disabled':'')+'>‹</button>'+
       '<span class="pkwlabel">Week '+pkWeek+'</span>'+
-      '<button class="chip sm" id="pkNext"'+(pkWeek>=PK_MAX_WEEK?' disabled':'')+'>›</button></div>'+
+      '<button class="chip sm" id="pkNext"'+(pkWeek>=PK_MAX_WEEK?' disabled':'')+'>›</button>'+
+      '<button class="chip sm'+(pkOdds?' on':'')+'" id="pkOddsBtn" title="Show the betting line next to each game">'+
+        'Odds '+(pkOdds?'on':'off')+'</button></div>'+
     '<div class="gtabs">'+tabs.map(t=>'<button class="'+(pkTab===t[0]?'on':'')+'" data-pkt="'+t[0]+'">'+
       t[1]+'</button>').join('')+'</div>';
 }
@@ -2560,17 +2589,27 @@ function pkPicksHTML(d){
       // Only colour a pick once the game is over: a correct-looking pick at
       // half time is not information, it is a tease.
       const verdict=g.final&&on?(g.winner_id===t.id?' win':g.winner_id?' loss':' push'):'';
+      const where=g.neutral?'neutral site':which;
       return '<button class="pkteam'+(on?' on':'')+verdict+(g.locked?' lock':'')+'" '+
-        'data-pkg="'+esc(g.id)+'" data-pkteam="'+esc(t.id)+'"'+(g.locked?' disabled':'')+'>'+
+        'data-pkg="'+esc(g.id)+'" data-pkteam="'+esc(t.id)+'"'+(g.locked?' disabled':'')+
+        ' title="'+esc(t.name+' — '+where)+'">'+
         (t.logo?'<img src="'+esc(t.logo)+'" alt="" onerror="this.style.display=\'none\'">':'')+
         '<span class="pkabbr">'+esc(t.abbrev||t.name)+'</span>'+
         (g.final||g.state==='in'?'<span class="pkscore">'+esc(num(t.score))+'</span>':'')+
         '</button>';
     };
     const when=g.final?'Final':g.state==='in'?'Live':gameTime(g.date);
+    // "away @ home" is the convention; a neutral-site game has no home team and
+    // ESPN says so explicitly, so it reads "vs" instead of claiming one.
+    const sep='<span class="pkat" aria-hidden="true">'+(g.neutral?'vs':'@')+'</span>';
+    const odds=(pkOdds&&g.odds&&(g.odds.details||g.odds.overUnder!==null))?
+      '<span class="pkodds">'+esc(g.odds.details||'')+
+      (g.odds.overUnder!==null&&g.odds.overUnder!==undefined?
+        (g.odds.details?' · ':'')+'O/U '+esc(g.odds.overUnder):'')+'</span>':'';
     return '<div class="pkgame'+(g.locked?' locked':'')+'">'+
-      '<div class="pkwhen">'+esc(when)+(g.locked&&!g.final?' · locked':'')+'</div>'+
-      '<div class="pkteams">'+side(g.away,'away')+side(g.home,'home')+'</div></div>';
+      '<div class="pkwhen"><span>'+esc(when)+(g.locked&&!g.final?' · locked':'')+'</span>'+
+      odds+'<button class="pkinfo" data-pkinfo="'+esc(g.id)+'" title="Box score, rosters, injuries">details</button></div>'+
+      '<div class="pkteams">'+side(g.away,'away')+sep+side(g.home,'home')+'</div></div>';
   }).join('');
   return '<div id="pknotes">'+pkNotesHTML(d)+'</div><div class="pkgames">'+rows+'</div>'+
     '<div class="pkhint">Picks save as you tap them, and stay changeable until each game kicks off.</div>';
@@ -2682,11 +2721,38 @@ function pkWire(){
       pkPools=null;pkPool=null;pkSet('pool',r.pool.id);renderPickem();
     }catch(e){pkErr=e.message;renderPickem();}
   };
+  if($('#pkBack'))$('#pkBack').onclick=()=>{
+    pkPool=pkPools.find(p=>String(p.id)===String(pkGet('pool')))||pkPools[0];
+    pkErr='';renderPickem();
+  };
   document.querySelectorAll('[data-pkp]').forEach(b=>b.onclick=()=>{
-    if(b.dataset.pkp==='new'){pkPool=null;pkPools=pkPools||[];$('#main').innerHTML=pkNoPoolsHTML();pkWire();return;}
+    // Keep pkPool set while the create/join screen is open, so "back" has
+    // somewhere to go. renderPickem() is not called here for the same reason.
+    if(b.dataset.pkp==='new'){pkErr='';$('#main').innerHTML=pkNoPoolsHTML();pkWire();return;}
     pkPool=pkPools.find(p=>String(p.id)===b.dataset.pkp)||pkPool;
     pkSet('pool',pkPool.id);renderPickem();
   });
+  if($('#pkOddsBtn'))$('#pkOddsBtn').onclick=()=>{
+    pkOdds=!pkOdds;pkSet('odds',pkOdds?'1':'');renderPickem();};
+  if($('#pkRename'))$('#pkRename').onclick=()=>{
+    const lbl=$('#pkNameLbl');if(!lbl)return;
+    lbl.innerHTML='<input id="pkNameIn" type="text" maxlength="60" value="'+esc(pkPool.name)+'">'+
+      '<button class="chip sm" id="pkNameOk">Save</button><button class="chip sm" id="pkNameNo">Cancel</button>';
+    const inp=$('#pkNameIn');inp.focus();inp.select();
+    const cancel=()=>{renderPickem();};
+    const save=async()=>{
+      const v=(inp.value||'').trim();
+      if(!v||v===pkPool.name){cancel();return;}
+      try{
+        await api('/pools/'+pkPool.id,{method:'PATCH',body:{name:v}});
+        pkPool.name=v;
+        const i=pkPools.findIndex(p=>p.id===pkPool.id);if(i>=0)pkPools[i].name=v;
+        pkToast('Renamed');renderPickem();
+      }catch(e){pkToast(e.message);cancel();}
+    };
+    $('#pkNameOk').onclick=save;$('#pkNameNo').onclick=cancel;
+    inp.onkeydown=e=>{if(e.key==='Enter')save();if(e.key==='Escape')cancel();};
+  };
   document.querySelectorAll('[data-pkt]').forEach(b=>b.onclick=()=>{
     pkTab=b.dataset.pkt;renderPickem();});
   if($('#pkPrev'))$('#pkPrev').onclick=()=>{if(pkWeek>1){pkWeek--;renderPickem();}};
@@ -2703,6 +2769,10 @@ function pkWire(){
 function pkWireBody(){
   document.querySelectorAll('.pkteam[data-pkg]').forEach(b=>b.onclick=()=>
     pkPick(b.dataset.pkg,b.dataset.pkteam,b));
+  // The same modal the scores view opens — box score, rosters, injuries, drives.
+  // A pool's league key is a LEAGUES key already, so nothing needs translating.
+  document.querySelectorAll('[data-pkinfo]').forEach(b=>b.onclick=()=>
+    openGame(b.dataset.pkinfo,pkPool.league));
 }
 
 /* ========================= TICKER ========================= */
