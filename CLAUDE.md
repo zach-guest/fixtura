@@ -8,75 +8,152 @@ dropped because the domain was taken.
 
 ## The hard constraint
 
-**One self-contained HTML file. No build step, no dependencies, no backend.**
-Google Fonts is the only external asset; everything else is inline. Deployed by
-dropping one file on a static host.
+**No build step, no bundler, no framework, no npm dependency at runtime.**
+Google Fonts is the only external asset; everything else the browser loads
+directly, as static files. Deployed by pushing files to a static host — `git
+push`, nothing compiles.
 
-Do not introduce a bundler, framework, or npm dependency into the frontend
-without explicitly agreeing to abandon this constraint first. The zero-friction
-deploy is a feature, not an accident.
+This used to also mean "one file." That part was relaxed on 2026-08-23: the
+frontend is now `index.html` (a shell) plus `styles.css` plus `src/*.js`, loaded
+as native ES modules (`<script type="module">`) — no bundler involved, still
+zero build step, still deployed by pushing files as-is. See **Frontend module
+layout** below for why and how. The load-bearing part of the constraint was
+always "no build step," not "one file"; the Worker already broke "no backend"
+for the same reason (a real need, decided deliberately, written down). Do not
+introduce a bundler or reach for npm at runtime without the same kind of
+explicit decision.
 
 ## Layout
 
-- `index.html` — the entire app, ~3,240 lines. (Re-check with `wc -l` when you edit
-  this line; it has been wrong by a thousand lines before.)
+- `index.html` — the DOM shell only (~60 lines): `<head>`, the static markup, and
+  a single `<script type="module" src="src/app.js">`. No app logic lives here
+  anymore.
+- `styles.css` — the whole stylesheet, unchanged from when it was inline; a
+  straight extraction, byte-identical to the old `<style>` block.
+- `src/` — the app, as ES modules. See **Frontend module layout** below.
 - `worker/` — the Cloudflare Worker API, **deployed 2026-08-22** at
-  `https://fixtura-api.fixturaapp.workers.dev`. The frontend does not reference it
-  yet. It has its own section below; `worker/test.sh` is the integration suite.
-  See `DECISIONS.md` for why it exists.
+  `https://fixtura-api.fixturaapp.workers.dev`. The frontend calls it for
+  accounts, settings sync, and pick'em (`src/api.js`, `src/account.js`,
+  `src/views/pickem.js`) — public sports data still goes straight to ESPN. It
+  has its own section below; `worker/test.sh` is the integration suite. See
+  `DECISIONS.md` for why the Worker exists.
 - `DECISIONS.md` — what was decided and what is planned. Not needed for ordinary
   changes; read it before touching the accounts/betting track.
 
 Before git, versions were hand-saved copies in `old versions/`; those 14
 snapshots and the original `HANDOFF.md` this file draws from live in history
-(`git log --diff-filter=D --name-only` to find them).
+(`git log --diff-filter=D --name-only` to find them). The pre-split single-file
+`index.html` (~3,325 lines) is likewise in git history — anything from before
+2026-08-23 (`git log --before=2026-08-23 -- index.html`) shows the whole app as
+one file, which is a faster read than the split version for understanding a
+single code path start to finish.
+
+## Frontend module layout
+
+`src/app.js` is the entry point; everything else is imported from it, directly
+or transitively. Roughly leaf-to-root:
+
+- `state.js` — one exported object, `S`, holding every piece of mutable app
+  state (`S.view`, `S.pkPool`, `S.modalData`, …). ES modules cannot share a
+  *reassignable* binding across files — `import {view} from './state.js'; view
+  = 'x'` is a `SyntaxError` — so anything that used to be a bare `let` became a
+  property write on this shared object instead. Constants that are genuinely
+  never reassigned (`LEAGUES`, `VIEW_LABELS`, …) stayed as plain `export const`
+  in `config.js` and did not need this treatment.
+- `config.js` — leagues, endpoints, static config. No imports.
+- `util.js` — generic helpers (`esc`, `store`, `logoOf`, date formatting, the
+  Wikipedia photo lookup shared by rosters/player-modal/venue). Only imports
+  from `config.js`. Deliberately a leaf: nothing in here imports from `views/`
+  or `components/` — if a "utility" needs a view- or component-specific
+  function, it isn't a utility, it belongs in that view/component instead
+  (this happened once, with `rosterHTML`, and was moved to `components/modal.js`
+  during the split rather than left as a reverse dependency).
+- `api.js` — the one place that calls our own Worker (`api()`, wrapping
+  `fetch` with the bearer token and JSON handling). ESPN calls still go through
+  plain `get()` in `util.js` — the frontend does not proxy public data through
+  the Worker; see `DECISIONS.md`.
+- `account.js` — sign-in, sign-out, settings sync, favourites, the tab-layout
+  bootstrap (`initSettings`, `reconcileViews`).
+- `views/` — one file per tab: `scores.js`, `teams.js`, `f1.js`, `golf.js`,
+  `calendar.js`, `pickem.js`.
+- `components/` — shared UI pieces used by more than one view: `gamecard.js`,
+  `modal.js` (the whole game-detail and player modal, including soccer lineups
+  and box scores), `drive.js`, `ticker.js`, `settings.js` (the settings panel
+  *and* the build-freshness check it shares with `updatecheck.js`),
+  `updatecheck.js`.
+
+**Circular imports exist and are intentional**, not a smell to "fix": `app.js`
+defines `render()`/`renderNav()`, which `components/settings.js` needs to
+redraw the tab row after a settings change, and `views/scores.js` needs
+`components/settings.js`'s `cfgHTML()`/`wireCfg()` because the settings panel
+renders inside the scores shell. This is safe under ES module semantics
+specifically because every cross-cycle reference is to a **hoisted function
+declaration**, and none of them is *called* during module evaluation — only
+later, from an event handler, after the whole graph has finished loading. If
+you ever convert one of these to an arrow function assigned to a `const`, this
+stops being safe (a `const` binding is in the temporal dead zone until its
+declaration line runs) — keep these as `function` declarations.
+
+**Side-effect-only imports are invisible to "what does this file need"
+reasoning.** `components/updatecheck.js` self-wires via an IIFE and exports
+nothing; nothing in `app.js` *references* it by name, so it has to be pulled in
+with a bare `import './components/updatecheck.js';` — dropped once already
+during the split (see hard-won detail below), because a reference-based import
+generator has no way to see a module that nothing calls.
+
+**Inline `onclick="fn()"` HTML strings need `fn` on `window` explicitly.** A
+classic non-module `<script>` puts its top-level function declarations on
+`window`; an ES module never does. Two functions in `components/modal.js`
+(`closeModal`, `closePlayer`) are invoked from `onclick=` attributes inside
+`renderXxxHTML()` template strings, so that file ends with
+`window.closeModal = closeModal; window.closePlayer = closePlayer;` — those two
+lines are load-bearing, not leftover debugging. If a new `renderXxxHTML()`
+template ever adds an inline `onclick="someFn()"`, `someFn` needs the same
+treatment (or, better, wire it with `.onclick=` from JS instead of an inline
+HTML string, which doesn't have this problem at all — the two existing cases
+were kept as inline strings only to keep the split a faithful line-for-line
+move).
 
 ## Running it
 
-Open `index.html` in a browser, or serve the folder:
-
-```bash
-ruby -run -e httpd . -p 8123
-```
-
-Both work from a normal terminal. Under the agent sandbox neither does: system
-`python3` can't call `getcwd` at import, and WEBrick hits the same wall when the
-harness spawns it. Open the file over `file://` to verify instead — the ESPN
-endpoints are CORS-open, so the app works fully from a file URL.
-
-`python3` itself is usable for scripting despite the above — the `getcwd` failure
-depends on the working directory, and `cd / && python3 -c '...'` runs fine. Useful
-for one-off analysis (decoding the inline icon, parsing a PNG) where there's no
-Node package to hand.
-
-**A local server does work**, same trick — `--directory` means the server never has
-to resolve the cwd:
+**`file://` no longer works, full stop — not even to look at it.** This changed
+on 2026-08-23. Before the module split, opening `index.html` directly worked
+fine for casual viewing (only the Chrome extension refused it); now the browser
+blocks `type="module"` scripts under `file://` on CORS grounds regardless of
+what's driving it, so the page loads with no app at all. Always serve the
+folder:
 
 ```bash
 cd / && (python3 -m http.server 8123 --directory /Users/zguest/Documents/Fixtura &)
 ```
 
-This matters more than it sounds: the Chrome extension **refuses `file://` URLs**
-("Can't interact with browser-internal or unparseable URLs"), so serving over HTTP is
-the only way to drive the real app from the browser tools. It is also the only way to
-exercise anything that reads response headers — `showBuildInfo()` and
-`checkForUpdate()` short-circuit on a non-`http(s)` protocol and can't be tested at
-all from a file URL. Kill it with `pkill -f "http.server 8123"` when done, and
-remember the browser caches: navigate to `?v=2` rather than wondering why an edit
-didn't take.
+Same `getcwd`-under-the-sandbox reason as before to run it from `/` with
+`--directory` rather than `cd`ing into the project first — `ruby -run -e httpd .
+-p 8123` still works too, from a normal terminal, if you're not under the agent
+sandbox. Kill the Python one with `pkill -f "http.server 8123"` when done, and
+remember the browser caches modules as well as the page: navigate to `?v=2`
+rather than wondering why an edit didn't take.
 
-**Syntax-check every edit. It takes a second.** Node v24 is installed at
-`/usr/local/bin/node`, so the script block can be extracted and parsed without a
-build step:
+`python3` itself is still usable for scripting despite the above — the `getcwd`
+failure depends on the working directory, and `cd / && python3 -c '...'` runs
+fine. Useful for one-off analysis where there's no Node package to hand.
+
+**Syntax-check every edit. It takes a second.** There's no single script block
+to extract anymore — check the file you touched directly. `node --check` only
+understands modules by file extension or an explicit flag, so a `.js` file
+needs a throwaway `.mjs` copy (or `--input-type=module`):
 
 ```bash
-awk 'f{if(/^<\/script>/){f=0;next}print} /^<script>/{f=1}' index.html > /tmp/app.js
-node --check /tmp/app.js
+cp src/views/pickem.js /tmp/check.mjs && node --check /tmp/check.mjs
 ```
 
-This catches the class of mistake that is otherwise only found by loading the page
-and noticing the whole app is blank. It proves nothing about behaviour — do that
-below — but there is no excuse for shipping a parse error.
+This is now the routine after any change: it proves the syntax is valid but not
+that every imported name actually exists in the file it's imported from — a
+`.mjs`-syntax-check on one file in isolation can't see that. Load the page in a
+real browser and check the console after any structural change to `src/`; a
+missing or misspelled export shows up there as a `SyntaxError` at import time,
+not at the call site, which can point you at the wrong file if you don't know
+to expect it.
 
 **Verifying behaviour under the agent.** The browser pane **serves a cached
 snapshot**: injected state is dropped
@@ -126,11 +203,14 @@ time, which looks exactly like "the feature didn't ship":
   it can serve a build from days earlier. Closing the window is not enough — Cmd+Q,
   or Cmd+R inside the window.
 
-`checkForUpdate()` handles this in-app: it HEADs the page's own URL and watches the
-`ETag`. Same-origin, so the header is readable; HEAD, so there's no body to download.
-It runs on load, every 10 minutes, and **on focus / visibilitychange** — the focus
-case is the important one, since that's exactly when a suspended web app resumes. A
-changed ETag raises a "new version available" banner.
+`checkForUpdate()` (`src/components/updatecheck.js`) handles this in-app: it HEADs
+the page's own URL and watches the `ETag`. Same-origin, so the header is
+readable; HEAD, so there's no body to download. It runs on load, every 10
+minutes, and **on focus / visibilitychange** — the focus case is the important
+one, since that's exactly when a suspended web app resumes. A changed ETag
+raises a "new version available" banner. It self-wires via an IIFE on import
+rather than being called explicitly, which is exactly why it went missing for
+one commit during the module split — see **Frontend module layout** above.
 
 **The server's `Last-Modified` is the deploy time, not your version.** Asking only
 the server cannot answer "am I stale?", and both this banner and the Settings panel
@@ -149,11 +229,12 @@ second same-origin file and would break the single-file constraint.
 
 ## Architecture
 
-Section banners in the source (`/* ===== NAME ===== */`) mark the boundaries:
-LEAGUES, STATE, UTIL, THEME, GAME CARD, SETTINGS PANEL, the per-view renderers,
-then wiring at the bottom.
-
-State is plain module-level `let`. No framework, no reactive layer — views
+Since the 2026-08-23 module split, the file boundaries from **Frontend module
+layout** above (`state.js`, `util.js`, `views/*.js`, `components/*.js`) are the
+real map — the old `/* ===== NAME ===== */` section banners that used to mark
+these same boundaries inside one file now mostly sit at the top of the file
+each section moved to. State lives on the shared `S` object in `state.js`, not
+bare module-level `let`. No framework, no reactive layer either way — views
 re-render by assigning `innerHTML` and re-wiring handlers.
 
 - **Themes** — five, as CSS custom properties on `html[data-theme=...]` at the
@@ -635,6 +716,34 @@ Each was a real bug found in testing. All are non-obvious and easy to reintroduc
       lists the five views that existed at the time and must not be "tidied" to
       match `VIEW_LABELS`, or hiding an old view would un-hide it once.
     Caught within a minute of adding PICK'EM: the tab vanished on sign-in.
+
+20. **A side-effect-only module import is invisible to reference-based tooling.**
+    `components/updatecheck.js` wires itself via an IIFE on load and exports
+    nothing, so nothing in `app.js` *references* it by name. The 2026-08-23
+    module split was done with a codemod that generated every import from the
+    actual reference graph (who calls what), which is exactly why this one got
+    dropped on the first pass — there was no call site to find. It needs a bare
+    `import './components/updatecheck.js';` that looks unused and is not. Caught
+    by clicking the "Reload"/"Dismiss" buttons on the stale-build banner and
+    finding no handler, not by any syntax or reference check — the class of bug
+    that only shows up in a real click, which is the whole reason
+    "Verifying behaviour under the agent" (above) insists on driving the real
+    controls rather than trusting a static check.
+
+21. **Inline `onclick="fn()"` HTML needs `fn` on `window` explicitly, post-split.**
+    A classic non-module `<script>` puts its top-level function declarations on
+    `window`; an ES module never does. `closeModal()` and `closePlayer()` are
+    invoked from `onclick=` attributes inside `renderXxxHTML()` template
+    strings in `components/modal.js`, which worked before the split by accident
+    of the old file being a plain script, and silently stopped working after —
+    the modal's close button did nothing, no error thrown anywhere a console
+    filter would catch it, since an inline handler's `ReferenceError` doesn't
+    surface the way a normal one does. Fixed with
+    `window.closeModal = closeModal; window.closePlayer = closePlayer;` at the
+    end of `modal.js` — those two lines are load-bearing, not leftover
+    debugging. A new inline `onclick="someFn()"` needs the same bridge, or
+    should be wired with `.onclick=` from JS instead, which never has this
+    problem.
 
 ## Known limitations
 
