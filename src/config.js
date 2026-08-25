@@ -1,19 +1,19 @@
 /* ========================= LEAGUES ========================= */
 const SOCCER_GROUPS={
   club:[
-    {country:'England',comps:[{k:'eng.1',label:'Premier League',core:1},{k:'eng.fa',label:'FA Cup'},{k:'eng.league_cup',label:'EFL Cup'}]},
-    {country:'Spain',comps:[{k:'esp.1',label:'La Liga',core:1},{k:'esp.copa_del_rey',label:'Copa del Rey'},{k:'esp.super_cup',label:'Supercopa'}]},
-    {country:'Germany',comps:[{k:'ger.1',label:'Bundesliga',core:1},{k:'ger.dfb_pokal',label:'DFB-Pokal'}]},
-    {country:'Italy',comps:[{k:'ita.1',label:'Serie A',core:1},{k:'ita.coppa_italia',label:'Coppa Italia'},{k:'ita.super_cup',label:'Supercoppa'}]},
-    {country:'France',comps:[{k:'fra.1',label:'Ligue 1',core:1},{k:'fra.coupe_de_france',label:'Coupe de France'}]},
-    {country:'USA',comps:[{k:'usa.1',label:'MLS',core:1},{k:'usa.open',label:'US Open Cup'}]},
-    {country:'Continental',comps:[{k:'uefa.champions',label:'Champions League',core:1},{k:'uefa.europa',label:'Europa League',core:1},
-      {k:'uefa.europa.conf',label:'Conference League',core:1},{k:'uefa.super_cup',label:'UEFA Super Cup'},{k:'fifa.cwc',label:'Club World Cup'}]}
+    {country:'England',comps:[{k:'eng.1',label:'Premier League'},{k:'eng.fa',label:'FA Cup'},{k:'eng.league_cup',label:'EFL Cup'}]},
+    {country:'Spain',comps:[{k:'esp.1',label:'La Liga'},{k:'esp.copa_del_rey',label:'Copa del Rey'},{k:'esp.super_cup',label:'Supercopa'}]},
+    {country:'Germany',comps:[{k:'ger.1',label:'Bundesliga'},{k:'ger.dfb_pokal',label:'DFB-Pokal'}]},
+    {country:'Italy',comps:[{k:'ita.1',label:'Serie A'},{k:'ita.coppa_italia',label:'Coppa Italia'},{k:'ita.super_cup',label:'Supercoppa'}]},
+    {country:'France',comps:[{k:'fra.1',label:'Ligue 1'},{k:'fra.coupe_de_france',label:'Coupe de France'}]},
+    {country:'USA',comps:[{k:'usa.1',label:'MLS'},{k:'usa.open',label:'US Open Cup'}]},
+    {country:'Continental',comps:[{k:'uefa.champions',label:'Champions League'},{k:'uefa.europa',label:'Europa League'},
+      {k:'uefa.europa.conf',label:'Conference League'},{k:'uefa.super_cup',label:'UEFA Super Cup'},{k:'fifa.cwc',label:'Club World Cup'}]}
   ],
   international:[
-    {country:'Major tournaments',comps:[{k:'fifa.world',label:'World Cup',core:1},{k:'uefa.euro',label:'Euros',core:1},
-      {k:'conmebol.america',label:'Copa America',core:1},{k:'concacaf.gold',label:'Gold Cup'},{k:'fifa.wwc',label:"Women's World Cup"}]},
-    {country:'Other',comps:[{k:'uefa.nations',label:'Nations League',core:1},{k:'fifa.worldq.uefa',label:'WC Qualifying (UEFA)'},
+    {country:'Major tournaments',comps:[{k:'fifa.world',label:'World Cup'},{k:'uefa.euro',label:'Euros'},
+      {k:'conmebol.america',label:'Copa America'},{k:'concacaf.gold',label:'Gold Cup'},{k:'fifa.wwc',label:"Women's World Cup"}]},
+    {country:'Other',comps:[{k:'uefa.nations',label:'Nations League'},{k:'fifa.worldq.uefa',label:'WC Qualifying (UEFA)'},
       {k:'fifa.worldq.conmebol',label:'WC Qualifying (CONMEBOL)'},{k:'fifa.friendly',label:'Friendlies'}]}
   ]
 };
@@ -54,7 +54,8 @@ const DEFAULT_VIEWS=['scores','teams','f1','golf','calendar','pickem'];
 const GOLF_TOURS=[['pga','PGA'],['lpga','LPGA'],['liv','LIV'],['eur','DP World'],
   ['champions-tour','Champions'],['ntw','Korn Ferry']];
 
-const LIVE_SCAN=['nfl','ncaaf','nba','wnba','ncaam','mlb','nhl','soc:eng.1','soc:esp.1','soc:ger.1','soc:ita.1','soc:fra.1','soc:usa.1','soc:uefa.champions'];
+const LIVE_SCAN=['nfl','ncaaf','nba','wnba','ncaam','mlb','nhl',
+  ...['club','international'].flatMap(m=>SOCCER_GROUPS[m].flatMap(g=>g.comps.map(c=>'soc:'+c.k)))];
 
 const API='https://site.api.espn.com/apis/site/v2/sports';
 

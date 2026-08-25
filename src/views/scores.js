@@ -66,7 +66,7 @@ async function loadScores(){
 
 async function loadSoccerScores(box){
   const groups=SOCCER_GROUPS[S.socMode].filter(g=>S.socFilter==='all'||g.country===S.socFilter);
-  const jobs=[];groups.forEach(g=>g.comps.forEach(c=>{if(S.socFilter!=='all'||c.core)jobs.push({g:g.country,c:c});}));
+  const jobs=[];groups.forEach(g=>g.comps.forEach(c=>jobs.push({g:g.country,c:c})));
   box.innerHTML='<div class="msg">Loading '+jobs.length+' competitions...</div>';
   const res=await Promise.all(jobs.map(j=>get(API+'/soccer/'+j.c.k+'/scoreboard?dates='+dateParam())
     .then(d=>({j:j,evs:d.events||[]})).catch(()=>({j:j,evs:[]}))));
