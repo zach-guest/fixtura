@@ -62,8 +62,30 @@ what is planned, which is read occasionally rather than every turn. Keep it that
    preemptively. Pick'em requires identity, which is the condition it named, so
    the accounts track below settled it the other way on 2026-08-21. Kept because
    the reasoning still applies to any *future* feature: don't add identity to
-   something that doesn't need it. localStorage remains the store of record until
-   the frontend actually calls `/me/settings`.
+   something that doesn't need it. localStorage is still the store of record for
+   a signed-out device, but a signed-in one now syncs through `/me/settings` (see
+   item 3 below) — this is no longer a gap, just the historical reasoning.
+
+4. **Operational gaps found while testing pick'em, flagged but not yet acted
+   on:**
+   - **D1's backup window is thin for a season-long pool.** D1's Time Travel
+     point-in-time restore is 7 days on the free Workers plan, 30 days on the
+     $5/mo plan. Over an 18-week season, a mangled week-3 pick not noticed
+     until week 5 would be unrecoverable on the free tier. Upgrade to the
+     $5/mo plan before real picks exist — i.e. before 2026-09-09.
+   - **Nothing is watching for errors.** Failures currently only reach
+     `console.error`/`wrangler tail`, which nobody is watching live. Two cheap
+     fixes, neither built: Cloudflare's built-in Worker error-rate email
+     alert, and a cron-triggered Worker that hits `/health` and asserts
+     ESPN's response shape hasn't silently changed — the more likely real
+     failure is picks quietly not saving behind a clean 200, not a crash.
+   - **Alternate sign-in providers were evaluated and deliberately deferred.**
+     Email magic links (via Cloudflare's email service) are the real fallback
+     if Google-only proves too limiting; GitHub is low effort but low value
+     for this audience; Apple needs a paid developer account plus a
+     self-minted JWT secret. Linking accounts across providers by matching
+     email is **not safe** unless the email is provider-verified — an
+     unverified match is an account-takeover hole. Not adding before Week 1.
 
 ## Requested but not yet built
 
@@ -78,6 +100,13 @@ what is planned, which is read occasionally rather than every turn. Keep it that
 - **Post-game EPA analysis.** Drive charts and season-long team/player EPA, framed
   as analysis rather than live. This is the one thing a second provider would
   genuinely add (see Open decisions 1).
+- **A custom domain.** Also required for Google's OAuth brand-verification step,
+  which currently isn't needed only because the requested scopes are the
+  non-sensitive tier (see the Worker section in `CLAUDE.md`).
+- **Onboarding.** A new user lands on SCORES with no way to discover pick'em
+  exists at all.
+- **A privacy policy / ToS.** Needed once usage extends past friends Zach
+  personally invited, given the app already handles Google OAuth data.
 
 ### Planned, in dependency order — do NOT build all at once
 
@@ -97,29 +126,33 @@ much as a product decision, so prefer the real thing over a shortcut:
 1. ~~**Cloudflare D1** (serverless SQLite) as the database.~~ **Done** — the
    `fixtura` database exists and `schema.sql` is applied to it. Free tier is far
    beyond Fixtura's realistic scale (5M row reads/day, 100K writes/day, 5 GB).
-2. **OAuth login** — **built, tested, and deployed 2026-08-22.** Google
-   authorization-code flow, sessions in D1, `admin` granted to the first account
-   to sign in. The routes are live but every one of them 500s with
-   `auth is not configured` until the secrets are set. Still to do: the Google
-   Cloud console setup (Zach-side, on the critical path — consent screen, client
-   id/secret, redirect URIs), the three secrets, and the frontend sign-in UI,
-   which does not exist at all yet. Per-user rate limiting is not built.
-3. **Cross-device sync** of favourites/settings — **worker side built**
-   (`GET|PUT /me/settings`, keyed on the existing `sb-*` names, last-write-wins
-   per key on the server's clock). The frontend does not call it yet; `store()`
-   is still localStorage-only.
-4. **Pick'em** — **server side built, tested and deployed 2026-08-22**, straight
-   up only. Create/join pools, submit and change picks, per-game locking, and
-   lazily-scored standings. Verified in production against real ESPN data, both
-   an upcoming week and a finished one. Settled with Zach: **picks lock per game
-   at its own kickoff**, and **a pick is hidden from everyone else until that
-   game locks**. Still to build: the pick'em UI, which is the part most likely to
-   eat the remaining schedule. Then **saved dashboard views** and **personal
-   stats** over a season.
+2. **OAuth login** — **fully built and live.** Google authorization-code flow,
+   sessions in D1, `admin` granted to the first account to sign in, the Google
+   Cloud console setup done, secrets set, and the frontend sign-in UI shipped
+   in the same session pick'em's UI did (item 4). The consent screen is
+   published (not a Testing-mode allow-list), so any Google account can sign
+   in — see the Worker section of `CLAUDE.md` for the scope/verification detail.
+   Per-user rate limiting is still not built.
+3. **Cross-device sync** of favourites/settings — **done, both sides.**
+   `GET|PUT /me/settings` on the worker, `pullSettings()`/`pushSettings()` in
+   `src/account.js` on the frontend, allow-listed to `SYNC_KEYS`: the account
+   wins on load, the device pushes on change, last-write-wins per key on the
+   server's clock.
+4. **Pick'em** — **fully shipped**, server side (2026-08-22) and the frontend UI
+   (`views/pickem.js` — My picks / Everyone / Standings) landed in the same
+   session, verified live against real ESPN data and a real second user in a
+   real pool. Settled with Zach: **picks lock per game at its own kickoff**,
+   and **a pick is hidden from everyone else until that game locks**. Still
+   open: **saved dashboard views** and **personal stats** over a season,
+   neither started.
    Other modes (`confidence`, `survivor`, `ats`, `golf6`, `f1podium`) are
    deliberately deferred until after Week 1 — `mode` is fixed per pool, so each
    is a new pool and nothing existing changes. `ats` additionally needs the line
    snapshotted at pick time; the odds are already on the scoreboard payload.
+   **Testing incident, 2026-08-22:** a smoke-test click overwrote one of Zach's
+   own real picks in the live "Moose Group" pool (unrecoverable) because the
+   pool wasn't checked for real data before testing against it — see hard-won
+   detail 24 in `CLAUDE.md`. Test writes only against a disposable pool now.
 5. **Push notifications — someday, explicitly low priority.** iOS Web Push only
    works for a PWA **installed to the home screen**; it will never reach a Safari
    tab. Needs a real `manifest.json` (the current `apple-mobile-web-app-capable`

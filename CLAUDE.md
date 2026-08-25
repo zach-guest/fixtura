@@ -246,7 +246,7 @@ re-render by assigning `innerHTML` and re-wiring handlers.
   `renderNav()` builds the row and rewires it. Settings offers up/down reordering and
   hide/show. Two guards must survive any refactor: the last visible tab cannot be
   hidden, and hiding the view you are currently on moves you to the first visible one.
-- **Views** — SCORES, TEAMS, F1, GOLF, CALENDAR.
+- **Views** — SCORES, TEAMS, F1, GOLF, CALENDAR, PICK'EM.
   - *Scores*: league chips plus a LIVE NOW chip that scans `LIVE_SCAN` and
     filters to in-progress games. Day/Week toggle (week uses ESPN's
     `dates=YYYYMMDD-YYYYMMDD` range syntax), date picker, arrow-key nav.
@@ -365,6 +365,12 @@ re-render by assigning `innerHTML` and re-wiring handlers.
     only if last-write-wins actually bites.
   - Sign-in **cannot work over `file://`** — it needs the served site or
     `localhost:8123`, both of which are on the Worker's origin allow-list.
+  - **Bearer token, not a cookie — deliberate.** The frontend
+    (`zach-guest.github.io`) and the Worker (`*.workers.dev`) are different
+    sites, so a session cookie would be third-party, and **Safari blocks those
+    by default** — which would break sign-in for exactly the Safari-dock-app
+    usage pattern this file already cares about (see **Deploying**). A bearer
+    token in `localStorage`, attached by `api()`, sidesteps that entirely.
 - **Refresh** — clock every 30s; one 60s timer for everything else. The ticker
   refreshes on **every** view, because it sits above the tab row and is always on
   screen; scores and golf refresh only when their view is the open one. Keep the
@@ -444,6 +450,17 @@ costs one indexed D1 lookup. Only the SHA-256 of a session token is stored. The
 OAuth `state` is HMAC-signed rather than stored, so it needs no KV namespace and
 no rows to clean up; it carries the return URL, which is checked against the
 allow-list because an open redirect there would hand over the session token.
+`users` is keyed on Google's `sub` (the stable subject id), not email — email
+can be reassigned within a Google Workspace, `sub` never changes.
+
+Requested scopes are `openid email profile` — the non-sensitive tier, which is
+why this doesn't need Google's app-verification review. The consent screen is
+**published**, not restricted to a Testing-mode allow-list, so any Google
+account can sign in; a pool's join code is the real gate, not the OAuth screen.
+Testing mode's 7-day refresh-token expiry (which would otherwise force a
+weekly re-login) doesn't apply here either way, since Google is only consulted
+once at sign-in and the app runs on its own longer-lived bearer token after
+that.
 
 Routes: `GET /health` (includes a real D1 check and names any missing config),
 `/auth/google/start`, `/auth/google/callback`, `POST /auth/logout`, `GET /me`,
@@ -479,7 +496,13 @@ is a delete-and-reinsert that never touches what anyone actually picked.
 
 Only `su` (straight up) can be created; other modes are rejected at creation
 rather than silently producing a pool nothing can score. `mode` is immutable per
-pool, so new modes are additive later.
+pool, so new modes are additive later. The picks column is `selection_id`, not
+`team_id` — named generically on purpose, so a later golf or F1 mode can store
+an athlete or driver id there without a second migration.
+
+Join codes are drawn from a 30-character alphabet with the visually-ambiguous
+characters dropped (`I`/`1`, `O`/`0`, `S`/`5` — `CODE_ALPHABET` in `pools.js`),
+since these get read aloud or typed on a phone.
 
 `getJSON()` in `proxy.js` is what the private lane uses to read ESPN — it exists
 so the User-Agent (hard-won detail 18) and the edge caching are not duplicated.
@@ -745,6 +768,47 @@ Each was a real bug found in testing. All are non-obvious and easy to reintroduc
     should be wired with `.onclick=` from JS instead, which never has this
     problem.
 
+22. **Golf course weather went stale indefinitely.** `ensureGolfCourse()` cached
+    by event id with no expiry, so the wind/temp shown were frozen from
+    whenever the tab was first opened — par and yardage don't change mid-event,
+    but weather does. Fixed with a 10-minute `GOLF_COURSE_TTL`. A naive version
+    of that fix then blanked a perfectly good course card (par, yardage, the
+    hole-difficulty table) on any single dropped poll; the real fix discards
+    the cached card only when there's nothing at all for the current event, so
+    a failed refetch just leaves the weather stale rather than losing the
+    whole card.
+
+23. **Leaving the Teams tab mid-load wedged team search permanently.**
+    `loadAllLeagues()` used to capture the `#brNote` progress element once;
+    leaving the tab detaches the node from the document, so every subsequent
+    progress write went nowhere, "ready" never appeared, and the `loading`
+    guard flag was never released — no retry was possible short of a reload.
+    Fixed by re-querying `#brNote` on every iteration instead of capturing it,
+    and releasing the loading flag in a `finally`. Releasing it naively on
+    success alone was a second bug: it re-ran the full 15-league load on every
+    re-render, so in-flight (`allLeaguesLoading`) and completed
+    (`allLeaguesDone`) are tracked as two separate flags.
+
+24. **Never smoke-test writes against a pool holding real data.** A test click
+    while verifying the pick'em write path overwrote one of Zach's actual picks
+    in the live "Moose Group" pool — the prior value was unrecoverable, because
+    nothing was checked for existing real picks before testing against that
+    pool. Test writes only against a disposable pool created (and deleted)
+    for the purpose, never against one anyone is actually using.
+
+25. **A hardcoded list scanning `SOCCER_GROUPS` can silently go stale, the same
+    way `sb-views` did (detail 19).** `LIVE_SCAN` used to hand-list seven
+    "core" soccer leagues; every domestic cup (FA Cup, EFL Cup, Copa del Rey,
+    …) was invisible to LIVE NOW even while live, with no error and no way to
+    notice short of already knowing to check that competition directly. The
+    Soccer **All** filter had the identical bug from the other direction: it
+    silently dropped every non-`core` competition rather than showing "all."
+    Fixed by deriving `LIVE_SCAN` from `SOCCER_GROUPS` itself (so a
+    competition added there is automatically scanned) and by dropping the
+    `core` filter from the All view entirely — "All" now means all. Caught
+    only because a specific competition (EFL Cup) was known to be live and
+    visibly missing; nothing would have flagged this on its own.
+
 ## Known limitations
 
 - **Soccer player headshots are sparse.** ESPN doesn't license them for most
@@ -752,7 +816,20 @@ Each was a real bug found in testing. All are non-obvious and easy to reintroduc
   free API fixes this — Sofascore and FM/FIFA databases are not openly
   accessible.
 - **College player bios are thin** compared to pros. An ESPN-side gap.
-- **No multi-user anything.** Favourites are localStorage, per-device.
+- **Favourites and settings are still per-device by default.** They're
+  localStorage; syncing across devices requires signing in (see Account).
+  Pick'em is the one genuinely multi-user feature — everything else is still
+  single-player.
+- **Nobody is watching for errors.** Worker failures only go to
+  `console.error`/`wrangler tail`; there's no alerting and no health check
+  running on a schedule. The likelier real failure mode is picks quietly not
+  saving behind a clean 200 (an ESPN response shape changing under the Worker),
+  not a crash — a cron-triggered `/health` check plus a Worker error-rate email
+  alert would both be cheap and neither is built.
+- **D1's backup window is thin for a season-long pool.** Point-in-time restore
+  (Time Travel) is 7 days on the free Workers plan, 30 on the $5/mo plan. A
+  mangled week-3 pick not noticed until week 5 is unrecoverable on the free
+  tier — upgrade before real picks exist.
 - **Betting data is limited** to whatever ESPN's `pickcenter` returns.
 
 ## Open decisions and roadmap
