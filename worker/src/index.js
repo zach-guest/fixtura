@@ -26,6 +26,7 @@ import { ROUTES, isProxyRoute, handleProxy } from './proxy.js';
 import { handleAuth } from './auth.js';
 import { handleMe } from './me.js';
 import { handlePools } from './pools.js';
+import { captureLeaderSnapshot, handleTrends } from './trends.js';
 
 /**
  * Path prefixes that are per-user. A request whose first segment is on this
@@ -33,11 +34,28 @@ import { handlePools } from './pools.js';
  */
 const PRIVATE_PREFIXES = new Set(['auth', 'me', 'pools', 'picks']);
 
-// Provably disjoint. If a future proxy route is ever named `picks`, this throws
-// on the first request after deploy rather than quietly caching private data.
+/**
+ * Public, but answered from here rather than proxied upstream. These are
+ * matched before the proxy table, so they need the same disjointness guarantee
+ * the private prefixes have — otherwise a proxy route added later under one of
+ * these names would be silently shadowed instead of failing loudly.
+ */
+const LOCAL_PUBLIC_PREFIXES = new Set(['health', 'trends']);
+
+// Provably disjoint, all three ways. If a future proxy route is ever named
+// `picks` or `trends`, this throws on the first request after deploy rather
+// than quietly caching private data or shadowing a route.
 for (const name of Object.keys(ROUTES)) {
   if (PRIVATE_PREFIXES.has(name)) {
     throw new Error(`route "${name}" is both a proxy route and a private prefix`);
+  }
+  if (LOCAL_PUBLIC_PREFIXES.has(name)) {
+    throw new Error(`route "${name}" is both a proxy route and a local public prefix`);
+  }
+}
+for (const name of LOCAL_PUBLIC_PREFIXES) {
+  if (PRIVATE_PREFIXES.has(name)) {
+    throw new Error(`route "${name}" is both a local public prefix and a private prefix`);
   }
 }
 
@@ -51,6 +69,10 @@ export default {
    */
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runHealthCheck(env));
+    // Independent of the health check on purpose: a leaderboard capture that
+    // fails should not mask a database that is down, and vice versa. The
+    // capture writes at most once a week — see trends.js for the guard.
+    ctx.waitUntil(runLeaderSnapshot(env, ctx));
   },
 
   async fetch(request, env, ctx) {
@@ -65,6 +87,7 @@ export default {
 
     try {
       if (head === 'health') return health(env, origin);
+      if (head === 'trends') return await handleTrends(request, segments, env, ctx, origin);
 
       if (PRIVATE_PREFIXES.has(head)) {
         if (head === 'auth')  return await handleAuth(request, segments, env, ctx, origin);
@@ -149,6 +172,26 @@ async function runHealthCheck(env) {
     throw new Error(msg);
   }
   console.log('[health cron] ok');
+}
+
+/**
+ * The weekly leaderboard capture, wrapped so its failures read like the health
+ * check's: logged with what actually went wrong, then rethrown so a Worker
+ * error-rate alert has something to fire on.
+ *
+ * It is genuinely time-sensitive in a way nothing else here is. ESPN keeps no
+ * leaderboard history (see trends.js), so a week this never runs is a week that
+ * can never be recovered — there is no backfill to catch up with later.
+ */
+async function runLeaderSnapshot(env, ctx) {
+  try {
+    const outcome = await captureLeaderSnapshot(env, ctx);
+    console.log(`[snapshot cron] ${outcome}`);
+  } catch (err) {
+    const msg = `[snapshot cron] capture failed: ${err && err.stack ? err.stack : err}`;
+    console.error(msg);
+    throw new Error(msg);
+  }
 }
 
 /**

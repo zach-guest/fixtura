@@ -120,3 +120,39 @@ CREATE TABLE IF NOT EXISTS results (
   scored_at   INTEGER NOT NULL,
   PRIMARY KEY (pool_id, event_id)
 );
+
+-- ---------------------------------------------------------------- stat history
+
+-- Weekly snapshots of a league's statistical leaderboard, written by the cron in
+-- index.js. See trends.js for why this has to be recorded rather than asked for:
+-- ESPN publishes leaders as they stand *now* and offers no historical view of
+-- them, so "who climbed the passing-yards board this week" is unanswerable after
+-- the fact unless it was written down as it happened.
+--
+-- Standings movement deliberately does NOT live here. A past week's results are
+-- still fetchable (`scoreboard?seasontype=2&week=N`), so records and seeding can
+-- be reconstructed on demand — storing them would only create a second copy free
+-- to drift from ESPN's.
+--
+-- Nothing here is per-user; it is the same for everyone, which is why the route
+-- that reads it returns pub() and lives outside PRIVATE_PREFIXES.
+CREATE TABLE IF NOT EXISTS stat_snapshots (
+  league        TEXT    NOT NULL DEFAULT 'nfl',  -- LEAGUES key, so this is not NFL-only later
+  season        INTEGER NOT NULL,
+  -- ESPN's week number as reported at capture time. A row says "this is how the
+  -- board looked at captured_at", not "these are the totals through week N" —
+  -- the UI compares two snapshots and labels the movement by date, so it never
+  -- has to claim the stronger thing.
+  week          INTEGER NOT NULL,
+  category      TEXT    NOT NULL,                -- 'passingYards', 'sacks', ...
+  rank          INTEGER NOT NULL,                -- 1 = leader
+  -- Parsed out of the $ref URL, never dereferenced: resolving 16 categories x 10
+  -- leaders would be 160 extra requests per capture, and the id is all that is
+  -- needed to match a stored row against a live one.
+  athlete_id    TEXT    NOT NULL,
+  team_id       TEXT,
+  value         REAL    NOT NULL,
+  display_value TEXT,
+  captured_at   INTEGER NOT NULL,                -- unix seconds
+  PRIMARY KEY (league, season, week, category, rank)
+);

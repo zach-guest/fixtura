@@ -134,6 +134,46 @@ chk "keyed route with no key" 500 "$(code $T/n4)"
 chk "  names the missing secret" "ODDS_API_KEY is not configured on the worker" "$(jq_ $T/n4b "['error']")"
 chk "  carries a request id" "yes" "$([ -n "$(hdr $T/n4 x-fixtura-request-id)" ] && echo yes || echo no)"
 
+echo "== trends: public lane, D1-backed =="
+# Seeded directly rather than by running the cron: the cron only writes when
+# ESPN says a regular season is under way, so a test that waited for it would
+# pass or fail depending on the month.
+$WRANGLER d1 execute fixtura --local --command \
+  "DELETE FROM stat_snapshots WHERE season = 2099;
+   INSERT OR REPLACE INTO stat_snapshots
+     (league,season,week,category,rank,athlete_id,team_id,value,display_value,captured_at)
+   VALUES ('nfl',2099,2,'passingYards',1,'101','14',900,'900',1700000000),
+          ('nfl',2099,2,'passingYards',2,'102','12',800,'800',1700000000),
+          ('nfl',2099,3,'passingYards',1,'102','12',1200,'1200',1700600000),
+          ('nfl',2099,3,'passingYards',2,'101','14',1100,'1100',1700600000),
+          ('nfl',2099,3,'sacks',1,'103','2',9,'9.0',1700600000);" >/dev/null 2>&1
+
+curl -s -D $T/t1 -o $T/t1b "$B/trends/leaders?season=2099" -H "Origin: $APP"
+chk "status" 200 "$(code $T/t1)"
+chk "cacheable, unlike the private lane" "public, max-age=900" "$(hdr $T/t1 cache-control)"
+chk "allow-origin" "$APP" "$(hdr $T/t1 access-control-allow-origin)"
+chk "newest week first" 3 "$(jq_ $T/t1b "d['snapshots'][0]['week']")"
+chk "two weeks by default" 2 "$(jq_ $T/t1b "len(d['snapshots'])")"
+chk "ranks come back ordered" "['102', '101']" "$(jq_ $T/t1b "list(l['athlete_id'] for l in d['snapshots'][0]['categories']['passingYards'])")"
+chk "categories are grouped" 2 "$(jq_ $T/t1b "len(d['snapshots'][0]['categories'])")"
+chk "movement is derivable" True "$(jq_ $T/t1b "d['snapshots'][0]['categories']['passingYards'][0]['athlete_id'] != d['snapshots'][1]['categories']['passingYards'][0]['athlete_id']")"
+
+curl -s -o $T/t2b "$B/trends/leaders?season=2099&weeks=1" -H "Origin: $APP"
+chk "weeks= is honoured" 1 "$(jq_ $T/t2b "len(d['snapshots'])")"
+curl -s -o $T/t3b "$B/trends/leaders?season=2100" -H "Origin: $APP"
+chk "no history is an empty list, not an error" "[]" "$(jq_ $T/t3b "d['snapshots']")"
+
+curl -s -D $T/t4 -o /dev/null "$B/trends/leaders" -H "Origin: $APP"
+chk "season is required" 400 "$(code $T/t4)"
+curl -s -D $T/t5 -o /dev/null "$B/trends/leaders?season=abc" -H "Origin: $APP"
+chk "season must be a year" 400 "$(code $T/t5)"
+curl -s -D $T/t6 -o /dev/null "$B/trends/nonsense?season=2099" -H "Origin: $APP"
+chk "unknown trends resource" 400 "$(code $T/t6)"
+curl -s -D $T/t7 -o /dev/null -X POST "$B/trends/leaders?season=2099" -H "Origin: $APP"
+chk "GET only" 400 "$(code $T/t7)"
+curl -s -D $T/t8 -o /dev/null "$B/trends/leaders?season=2099" -H "Origin: https://evil.example"
+chk "unknown origin gets no ACAO" "" "$(hdr $T/t8 access-control-allow-origin)"
+
 # --------------------------------------------------------------------------
 # Authenticated. Seeds the local D1 the way a completed Google login would.
 # --------------------------------------------------------------------------
