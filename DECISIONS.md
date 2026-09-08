@@ -73,12 +73,17 @@ what is planned, which is read occasionally rather than every turn. Keep it that
      $5/mo plan. Over an 18-week season, a mangled week-3 pick not noticed
      until week 5 would be unrecoverable on the free tier. Upgrade to the
      $5/mo plan before real picks exist — i.e. before 2026-09-09.
-   - **Nothing is watching for errors.** Failures currently only reach
-     `console.error`/`wrangler tail`, which nobody is watching live. Two cheap
-     fixes, neither built: Cloudflare's built-in Worker error-rate email
-     alert, and a cron-triggered Worker that hits `/health` and asserts
-     ESPN's response shape hasn't silently changed — the more likely real
-     failure is picks quietly not saving behind a clean 200, not a crash.
+   - **Nothing is watching for errors — half fixed 2026-08-25.** The
+     cron-triggered half is **done**: `runHealthCheck()` in `worker/src/index.js`
+     runs every 30 minutes (`triggers.crons` in `wrangler.jsonc`), checks D1
+     and required secrets the same way `/health` does, and additionally pulls
+     an NFL scoreboard and asserts `events[]` is still an array — the more
+     likely real failure is picks quietly not saving behind a clean 200
+     because ESPN's shape changed, not the Worker crashing outright. It
+     throws on a problem so a scheduled-handler error actually exists for a
+     dashboard alert to fire on. **Still not done:** the Cloudflare dashboard
+     email alert itself (Notifications → Workers) — that half is a Zach-side
+     dashboard click-through, same pattern as the OAuth consent screen.
    - **Alternate sign-in providers were evaluated and deliberately deferred.**
      Email magic links (via Cloudflare's email service) are the real fallback
      if Google-only proves too limiting; GitHub is low effort but low value
@@ -103,8 +108,15 @@ what is planned, which is read occasionally rather than every turn. Keep it that
 - **A custom domain.** Also required for Google's OAuth brand-verification step,
   which currently isn't needed only because the requested scopes are the
   non-sensitive tier (see the Worker section in `CLAUDE.md`).
-- **Onboarding.** A new user lands on SCORES with no way to discover pick'em
-  exists at all.
+- ~~**Onboarding.**~~ **Half done, 2026-08-25.** A first-visit welcome panel
+  (`checkWelcome()` in `app.js`) now points explicitly at PICK'EM, and an
+  invite is now a real `?join=CODE` link (`checkJoinLink` logic in
+  `initSettings()`, `account.js`) rather than a bare code to retype — it
+  routes straight to pick'em and joins automatically once signed in, surviving
+  the OAuth redirect via `sb-pk-pendingjoin`. What's still missing: nothing
+  tells an *existing* user pick'em now has more modes, or that a specific pool
+  they're in switched anything — this only helps a brand-new visitor or a
+  fresh invite.
 - **A privacy policy / ToS.** Needed once usage extends past friends Zach
   personally invited, given the app already handles Google OAuth data.
 
@@ -145,10 +157,21 @@ much as a product decision, so prefer the real thing over a shortcut:
    and **a pick is hidden from everyone else until that game locks**. Still
    open: **saved dashboard views** and **personal stats** over a season,
    neither started.
-   Other modes (`confidence`, `survivor`, `ats`, `golf6`, `f1podium`) are
-   deliberately deferred until after Week 1 — `mode` is fixed per pool, so each
-   is a new pool and nothing existing changes. `ats` additionally needs the line
-   snapshotted at pick time; the odds are already on the scoreboard payload.
+   **`confidence` and `survivor` shipped 2026-08-25** — both server (schema,
+   `pools.js`) and frontend (`pickem.js`), covered by 150/150 assertions in
+   `worker/test.sh` including elimination, confidence-rank swaps, and the
+   survivor week-lock (see hard-won detail 27 — the first cut let a losing
+   Thursday pick be abandoned on Sunday), and
+   the `confidence` column was added to the live D1 via `ALTER TABLE` (not a
+   fresh `schema.sql` apply, which would have skipped it — `CREATE TABLE IF
+   NOT EXISTS` is a no-op against a table that already exists). Survivor's
+   "no team twice, one pick a week" rule has no DB constraint backing it —
+   SQLite can't express a partial unique index keyed on another table's
+   `pools.mode` — so it's enforced entirely in `pools.js`, the same way
+   locking already was. `ats`, `golf6`, and `f1podium` remain deferred —
+   `ats` needs the line snapshotted at pick time (the odds are already on the
+   scoreboard payload); `golf6`/`f1podium` need "week" reshaped into
+   "tournament"/"race", a bigger change than either of the two that shipped.
    **Testing incident, 2026-08-22:** a smoke-test click overwrote one of Zach's
    own real picks in the live "Moose Group" pool (unrecoverable) because the
    pool wasn't checked for real data before testing against it — see hard-won
@@ -157,10 +180,16 @@ much as a product decision, so prefer the real thing over a shortcut:
    works for a PWA **installed to the home screen**; it will never reach a Safari
    tab. Needs a real `manifest.json` (the current `apple-mobile-web-app-capable`
    meta is not sufficient on modern iOS), a service worker, a per-device
-   subscription tied to a user, and a Worker-side send trigger. **This is the one
-   roadmap item that breaks the single-file constraint** — a service worker must
-   be a separate same-origin file, so it's three files minimum. Make that a
-   deliberate decision, not a drift.
+   subscription tied to a user, and a Worker-side send trigger.
+   The old reasoning here — "breaks the single-file constraint" — is stale as of
+   the 2026-08-23 module split; the frontend is already several files, so file
+   *count* isn't the obstacle any more (see the hard constraint note in
+   `CLAUDE.md`). What actually makes this a bigger lift is that a service worker
+   isn't an ES module the page imports — it's a separate script the browser
+   registers and runs in its own lifecycle (install/activate/fetch events),
+   independent of any page being open, plus a real subscription/send pipeline
+   through the Worker. That's genuine new scope, not a constraint violation.
+   Still low priority; not started.
 
 **Infrastructure ceiling:** Worker + KV + D1 covers everything above, including a
 full betting suite. The only real breakpoint is training a custom EPA/WP model,

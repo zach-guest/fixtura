@@ -81,6 +81,35 @@ document.addEventListener('keydown',e=>{
   if(e.key==='ArrowLeft'){S.dateObj.setDate(S.dateObj.getDate()-(S.weekMode?7:1));renderScoresShell();loadScores();}
   if(e.key==='ArrowRight'){S.dateObj.setDate(S.dateObj.getDate()+(S.weekMode?7:1));renderScoresShell();loadScores();}});
 
+/* ========================= WELCOME ========================= */
+/* A first-visit-only orientation panel, mainly to point at PICK'EM — the one
+   feature that needs an invite to be discovered at all (see DECISIONS.md).
+   Reuses the game-detail modal's own backdrop/#modalInner rather than adding a
+   second one to index.html; nothing else could have it open this early in boot. */
+function checkWelcome(){
+  try{
+    if(store('sb-welcomeseen'))return;
+    if(store('sb-pk-pendingjoin'))return;   // an invite link already explains itself
+  }catch(e){return;}
+  $('#modalInner').innerHTML='<div class="mhead"><button class="mclose" id="welcomeX">&times;</button></div>'+
+    '<div class="pktext" style="padding:0 4px 4px">'+
+    '<h2 class="cond" style="margin:0 0 8px">Welcome to Fixtura</h2>'+
+    '<p class="pktext">Scores, schedules, rosters, stats, F1, and a fixture calendar — one dashboard '+
+    'instead of a pile of apps.</p>'+
+    '<p class="pktext">One thing worth knowing up front: the <b>PICK’EM</b> tab lets you and friends pick '+
+    'winners against each other every week. It needs a quick Google sign-in, and joining a friend’s pool '+
+    'is one tap on their invite link.</p>'+
+    '<button class="chip" id="welcomeOk">Got it</button></div>';
+  $('#backdrop').classList.add('open');document.body.style.overflow='hidden';
+  /* Marked seen on SHOW, not on close. This shares the game modal's backdrop, so
+     Escape and a backdrop click both go through closeModal(), which knows nothing
+     about this panel — recording it in the buttons' own handler meant those two
+     exits dismissed the panel and brought it back on the next visit. */
+  try{store('sb-welcomeseen','1');}catch(e){}
+  const close=()=>{$('#backdrop').classList.remove('open');document.body.style.overflow='';};
+  $('#welcomeX').onclick=close;$('#welcomeOk').onclick=close;
+}
+
 clock();
 
 setInterval(clock,30000);
@@ -94,6 +123,8 @@ render();
 loadTicker();
 
 stamp();
+
+checkWelcome();
 
 /* Auth resolves after the first paint on purpose: the app is fully usable signed
    out, so nothing should wait on a network round trip to our Worker. If an account

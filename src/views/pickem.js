@@ -23,6 +23,14 @@ function pkGet(k){try{return store('sb-pk-'+k);}catch(e){return null;}}
 
 async function renderPickem(){
   if(!S.me){$('#main').innerHTML=pkSignedOutHTML();pkWire();return;}
+  const pending=pkGet('pendingjoin');
+  if(pending){
+    pkSet('pendingjoin','');    // one attempt only — a bad/stale code shouldn't loop forever
+    try{
+      const r=await api('/pools/join',{method:'POST',body:{code:pending}});
+      S.pkPools=null;S.pkPool=null;S.pkErr='';pkSet('pool',r.pool.id);
+    }catch(e){S.pkErr='Couldn’t join with code '+pending+': '+e.message;}
+  }
   if(!S.pkPools){
     $('#main').innerHTML='<div class="msg">Loading your pools…</div>';
     try{S.pkPools=(await api('/pools')).pools||[];}
@@ -37,12 +45,22 @@ async function renderPickem(){
 }
 
 function pkSignedOutHTML(){
+  const invited=pkGet('pendingjoin');
   return '<div class="panel pkintro"><div class="grouplabel" style="margin:0 0 6px">Pick’em</div>'+
-    '<p class="pktext">Pick every game, week by week, against your friends. One point a winner.</p>'+
+    (invited?'<p class="pktext">You’ve been invited to a pool. Sign in and you’ll join it automatically.</p>':
+      '<p class="pktext">Pick every game, week by week, against your friends. One point a winner.</p>')+
     '<p class="pktext dim">It needs an account so your picks follow you between devices and everyone '+
     'sees the same leaderboard. Nothing else in Fixtura does.</p>'+
     '<button class="chip" id="pkSignin">Sign in with Google</button></div>';
 }
+
+const PK_MODES=[['su','Straight up'],['confidence','Confidence'],['survivor','Survivor']];
+const PK_MODE_LABEL={su:'straight up',confidence:'confidence',survivor:'survivor'};
+const PK_MODE_HINT={
+  su:'One point a winner. Simple.',
+  confidence:'Pick every game, then spend 1 to N points across them (N = games that week), each amount used once. A right pick scores what you spent on it, so your surest game gets N — not 1.',
+  survivor:'One team a week, straight up. Lose and you’re out — for the season. A team can only be used once.',
+};
 
 function pkNoPoolsHTML(){
   // If they already belong to a pool, this screen is a detour and needs a way
@@ -50,14 +68,17 @@ function pkNoPoolsHTML(){
   // happened the first time it was used.
   const back=(S.pkPools&&S.pkPools.length)?
     '<div class="subchips"><button class="chip sm" id="pkBack">‹ Back to '+esc(S.pkPools[0].name)+'</button></div>':'';
+  const mode=S.pkNewMode||'su';
   return back+
     '<div class="panel"><div class="grouplabel" style="margin:0 0 6px">Start a pool</div>'+
-    '<p class="pktext dim">You pick, your friends pick, the winner is whoever calls the most games.</p>'+
+    '<div class="subchips" style="margin:0 0 8px">'+PK_MODES.map(m=>'<button class="chip sm'+(m[0]===mode?' on':'')+
+      '" data-pknm="'+m[0]+'">'+m[1]+'</button>').join('')+'</div>'+
+    '<p class="pktext dim">'+esc(PK_MODE_HINT[mode])+'</p>'+
     '<div class="pkform"><input id="pkName" type="text" maxlength="60" placeholder="Pool name" '+
       'value="'+esc((S.me&&S.me.name?S.me.name.split(' ')[0]+'’s':'Sunday')+' Pool')+'">'+
       '<button class="chip" id="pkCreate">Create</button></div></div>'+
     '<div class="panel"><div class="grouplabel" style="margin:0 0 6px">Or join one</div>'+
-    '<p class="pktext dim">Whoever made the pool has a six-character code.</p>'+
+    '<p class="pktext dim">Whoever made the pool has a six-character code, or sent you a link.</p>'+
     '<div class="pkform"><input id="pkCode" type="text" maxlength="6" placeholder="ABC123" '+
       'style="text-transform:uppercase;font-family:\'Roboto Mono\',monospace;letter-spacing:2px">'+
       '<button class="chip" id="pkJoin">Join</button></div></div>'+
@@ -75,8 +96,9 @@ function pkShellHTML(){
       '<div class="pkname" id="pkNameLbl">'+esc(S.pkPool.name)+
         (owner?'<button class="pkrename" id="pkRename" title="Rename this pool">rename</button>':'')+'</div>'+
       '<div class="pkmeta">'+esc(String(S.pkPool.season))+' · '+esc((S.pkPool.league||'').toUpperCase())+
-      ' · straight up · '+esc(String(S.pkPool.members||1))+' '+((S.pkPool.members||1)===1?'player':'players')+'</div></div>'+
-      '<button class="chip sm pkcode" id="pkCopy" title="Copy the join code">'+esc(S.pkPool.join_code||'')+'</button></div>'+
+      ' · '+esc(PK_MODE_LABEL[S.pkPool.mode]||S.pkPool.mode)+' · '+esc(String(S.pkPool.members||1))+' '+
+      ((S.pkPool.members||1)===1?'player':'players')+'</div></div>'+
+      '<button class="chip sm pkcode" id="pkCopy" title="Copy an invite link">'+esc(S.pkPool.join_code||'')+'</button></div>'+
     '<div class="pkweek"><button class="chip sm" id="pkPrev"'+(S.pkWeek<=1?' disabled':'')+'>‹</button>'+
       '<span class="pkwlabel">Week '+S.pkWeek+'</span>'+
       '<button class="chip sm" id="pkNext"'+(S.pkWeek>=PK_MAX_WEEK?' disabled':'')+'>›</button>'+
@@ -104,6 +126,8 @@ async function pkLoadTab(){
    is one tap, and the choice stays visible without opening anything. */
 function pkPicksHTML(d){
   if(!d.games.length)return '<div class="msg">No games scheduled for week '+d.week+'.</div>';
+  if(S.pkPool.mode==='survivor')return pkPicksSurvivorHTML(d);
+  if(S.pkPool.mode==='confidence')return pkPicksConfidenceHTML(d);
   const mine=d.myPicks||{};
   const rows=d.games.map(g=>{
     const pick=mine[g.id]||'';
@@ -136,6 +160,133 @@ function pkPicksHTML(d){
   }).join('');
   return '<div id="pknotes">'+pkNotesHTML(d)+'</div><div class="pkgames">'+rows+'</div>'+
     '<div class="pkhint">Picks save as you tap them, and stay changeable until each game kicks off.</div>';
+}
+
+/* Confidence: the same team-button row as straight up, plus a rank 1..N select
+   per game. The select is never gated on a pick existing (chicken-and-egg) —
+   clicking a team with no rank chosen yet auto-assigns the highest one still
+   free, via pkNextConfidence(); the select is there to move it afterward. */
+function pkPicksConfidenceHTML(d){
+  const mine=d.myPicks||{},conf=d.myConfidence||{};
+  const n=d.games.length;
+  const rows=d.games.map(g=>{
+    const pick=mine[g.id]||'';
+    const c=conf[g.id]||'';
+    const side=(t,which)=>{
+      const on=pick===t.id;
+      const verdict=g.final&&on?(g.winner_id===t.id?' win':g.winner_id?' loss':' push'):'';
+      const where=g.neutral?'neutral site':which;
+      return '<button class="pkteam'+(on?' on':'')+verdict+(g.locked?' lock':'')+'" '+
+        'data-pkg="'+esc(g.id)+'" data-pkteam="'+esc(t.id)+'"'+(g.locked?' disabled':'')+
+        ' title="'+esc(t.name+' — '+where)+'">'+
+        (t.logo?'<img src="'+esc(t.logo)+'" alt="" onerror="this.style.display=\'none\'">':'')+
+        '<span class="pkabbr">'+esc(t.abbrev||t.name)+'</span>'+
+        (g.final||g.state==='in'?'<span class="pkscore">'+esc(num(t.score))+'</span>':'')+
+        '</button>';
+    };
+    const when=g.final?'Final':g.state==='in'?'Live':gameTime(g.date);
+    const sep='<span class="pkat" aria-hidden="true">'+(g.neutral?'vs':'@')+'</span>';
+    const opts=Array.from({length:n},(_,i)=>i+1);
+    /* Labelled in POINTS, not "rank 1..N". The number IS the score a correct pick
+       earns, so the highest number is the surest pick — but "rank 1" reads as
+       "first/best" to anyone who has seen a normal leaderboard, which is exactly
+       backwards here and was misread that way the first time it shipped. */
+    const confSel='<select class="pkconf" data-pkgc="'+esc(g.id)+'"'+(g.locked?' disabled':'')+
+      ' title="Points earned if this pick is right — spend your highest on your surest game">'+
+      '<option value=""'+(c?'':' selected')+'>pts —</option>'+
+      opts.map(o=>'<option value="'+o+'"'+(String(o)===String(c)?' selected':'')+'>'+o+' pts</option>').join('')+
+      '</select>';
+    return '<div class="pkgame'+(g.locked?' locked':'')+'">'+
+      '<div class="pkwhen"><span>'+esc(when)+(g.locked&&!g.final?' · locked':'')+'</span>'+
+      confSel+
+      '<button class="pkinfo" data-pkinfo="'+esc(g.id)+'" title="Box score, rosters, injuries">details</button></div>'+
+      '<div class="pkteams">'+side(g.away,'away')+sep+side(g.home,'home')+'</div></div>';
+  }).join('');
+  return '<div id="pknotes">'+pkNotesHTML(d)+'</div><div class="pkgames">'+rows+'</div>'+
+    '<div class="pkhint">Pick a winner, then spend 1–'+n+' points on it, each amount once. '+
+    'A right pick scores what you spent, so put '+n+' on your surest game. '+
+    'Giving a game points another already has swaps them.</div>';
+}
+
+/* Survivor: one pick for the WHOLE week, not per game, so team buttons span
+   every game in the list — clicking one replaces whatever else was picked this
+   week rather than toggling within its own row. A team already burned in an
+   earlier week shows locked with "used" rather than disappearing, so it stays
+   clear why it can't be tapped.
+
+   The list looks like the straight-up grid but does NOT behave like it, so the
+   chosen team is lifted into a banner and every other game is receded — without
+   that, fifteen untouched rows sit there looking just as pickable as the one
+   that counts. Once the chosen game kicks off the week is spent (the worker
+   refuses any further pick — hard-won detail 27), so nothing is left tappable
+   in that state either. */
+function pkPicksSurvivorHTML(d){
+  const surv=d.survivor||{usedTeams:[],eliminated:false};
+  if(surv.eliminated){
+    return '<div class="msg err">You were eliminated from this pool — no more picks this season. '+
+      'Check Standings to see how everyone else is doing.</div>';
+  }
+  const used=new Set(surv.usedTeams||[]);
+  const mine=d.myPicks||{};
+  const chosenGame=d.games.find(g=>mine[g.id])||null;
+  const chosen=chosenGame?(mine[chosenGame.id]===chosenGame.home.id?chosenGame.home:chosenGame.away):null;
+  const spent=!!(chosenGame&&chosenGame.locked);
+  const rows=d.games.map(g=>{
+    const isChosen=!!(chosenGame&&g.id===chosenGame.id);
+    const side=(t,which)=>{
+      const on=mine[g.id]===t.id;
+      const usedUp=used.has(t.id)&&!on;
+      const off=g.locked||usedUp||spent;
+      const verdict=g.final&&on?(g.winner_id===t.id?' win':g.winner_id?' loss':' push'):'';
+      const where=g.neutral?'neutral site':which;
+      const why=usedUp?' — already used this season':spent&&!on?' — this week is already locked in':'';
+      return '<button class="pkteam'+(on?' on':'')+verdict+(off?' lock':'')+'" '+
+        'data-pkg="'+esc(g.id)+'" data-pkteam="'+esc(t.id)+'"'+(off?' disabled':'')+
+        ' title="'+esc(t.name+' — '+where+why)+'">'+
+        (t.logo?'<img src="'+esc(t.logo)+'" alt="" onerror="this.style.display=\'none\'">':'')+
+        '<span class="pkabbr">'+esc(t.abbrev||t.name)+'</span>'+
+        (usedUp?'<span class="pkodds">used</span>':'')+
+        (g.final||g.state==='in'?'<span class="pkscore">'+esc(num(t.score))+'</span>':'')+
+        '</button>';
+    };
+    const when=g.final?'Final':g.state==='in'?'Live':gameTime(g.date);
+    const sep='<span class="pkat" aria-hidden="true">'+(g.neutral?'vs':'@')+'</span>';
+    // Recede everything that is not the pick, but only once there IS one —
+    // before that, all sixteen are equally live choices.
+    return '<div class="pkgame'+(g.locked?' locked':'')+(chosenGame&&!isChosen?' pkmuted':'')+'">'+
+      '<div class="pkwhen"><span>'+esc(when)+(g.locked&&!g.final?' · locked':'')+'</span>'+
+      '<button class="pkinfo" data-pkinfo="'+esc(g.id)+'" title="Box score, rosters, injuries">details</button></div>'+
+      '<div class="pkteams">'+side(g.away,'away')+sep+side(g.home,'home')+'</div></div>';
+  }).join('');
+  return '<div id="pknotes">'+pkSurvivorBannerHTML(d,chosenGame,chosen,spent)+'</div>'+
+    '<div class="pkgames">'+rows+'</div>'+
+    '<div class="pkhint">'+(spent
+      ? 'Your game has kicked off, so week '+d.week+' is locked in. Come back once it is final.'
+      : 'One team, straight up, for the whole week. Win and you continue; lose and you\'re out — '+
+        'and a team can only ever be used once.')+'</div>';
+}
+
+/* The chosen team, lifted out of the list. Kept separate from the rows for the
+   same reason pkNotesHTML() is: it is the part worth seeing without scrolling. */
+function pkSurvivorBannerHTML(d,chosenGame,chosen,spent){
+  if(!chosen){
+    return '<div class="pknote warn">No pick yet for week '+d.week+' — choose one team below.</div>';
+  }
+  const opp=chosen.id===chosenGame.home.id?chosenGame.away:chosenGame.home;
+  const vs=(chosenGame.neutral||chosen.id===chosenGame.home.id?'vs ':'at ')+(opp.abbrev||opp.name);
+  // Only colour it once the game is final — same rule as everywhere else here:
+  // a pick that merely looks safe at half time is a tease, not information.
+  const verdict=chosenGame.final?(chosenGame.winner_id===chosen.id?' win':chosenGame.winner_id?' loss':''):'';
+  const state=chosenGame.final
+    ? (chosenGame.winner_id===chosen.id?'Survived':chosenGame.winner_id?'Eliminated':'Tie')
+    : chosenGame.state==='in'?'Live now':spent?'Kicked off':gameTime(chosenGame.date);
+  return '<div class="pkchosen'+verdict+'">'+
+    '<div class="pkchoselbl">Week '+d.week+' pick</div>'+
+    '<div class="pkchoseteam">'+
+      (chosen.logo?'<img src="'+esc(chosen.logo)+'" alt="" onerror="this.style.display=\'none\'">':'')+
+      '<span>'+esc(chosen.name)+'</span></div>'+
+    '<div class="pkchosemeta">'+esc(vs)+' · '+esc(state)+
+      (spent||chosenGame.final?'':' · tap another team to change')+'</div></div>';
 }
 
 /* Kept separate so a tap can refresh the count in place. Re-rendering the whole
@@ -180,6 +331,9 @@ function pkGridHTML(d){
 function pkStandingsHTML(s){
   const rows=(s.standings||[]);
   if(!rows.length)return '<div class="msg">Nothing scored yet.</div>';
+  const mode=s.pool&&s.pool.mode;
+  if(mode==='confidence')return pkStandingsConfidenceHTML(rows,s);
+  if(mode==='survivor')return pkStandingsSurvivorHTML(rows,s);
   const any=rows.some(r=>r.wins||r.losses);
   if(!any)return '<div class="msg">No games have finished yet. Standings appear once results are in.</div>';
   return '<div class="gwrap"><table class="pkgrid pkstand"><thead><tr><th></th><th>Player</th>'+
@@ -188,6 +342,29 @@ function pkStandingsHTML(s){
       '<td class="pkrank">'+(i+1)+'</td><td class="pkwho">'+esc(r.name||'—')+'</td>'+
       '<td>'+num(r.wins)+'</td><td>'+num(r.losses)+'</td><td>'+num(r.pushes)+'</td>'+
       '<td>'+(r.pct===null||r.pct===undefined?'—':esc(r.pct)+'%')+'</td></tr>').join('')+
+    '</tbody></table></div>'+
+    '<div class="pkhint">Weeks scored: '+(s.weeks&&s.weeks.length?esc(s.weeks.join(', ')):'none yet')+'.</div>';
+}
+
+function pkStandingsConfidenceHTML(rows,s){
+  const any=rows.some(r=>r.correct||r.wrong);
+  if(!any)return '<div class="msg">No games have finished yet. Standings appear once results are in.</div>';
+  return '<div class="gwrap"><table class="pkgrid pkstand"><thead><tr><th></th><th>Player</th>'+
+    '<th>Points</th><th>Right</th><th>Wrong</th></tr></thead><tbody>'+
+    rows.map((r,i)=>'<tr'+(S.me&&r.user_id===S.me.id?' class="pkme"':'')+'>'+
+      '<td class="pkrank">'+(i+1)+'</td><td class="pkwho">'+esc(r.name||'—')+'</td>'+
+      '<td>'+num(r.points)+'</td><td>'+num(r.correct)+'</td><td>'+num(r.wrong)+'</td></tr>').join('')+
+    '</tbody></table></div>'+
+    '<div class="pkhint">Points are what was spent on each correct pick; a miss scores zero. '+
+    'Weeks scored: '+(s.weeks&&s.weeks.length?esc(s.weeks.join(', ')):'none yet')+'.</div>';
+}
+
+function pkStandingsSurvivorHTML(rows,s){
+  return '<div class="gwrap"><table class="pkgrid pkstand"><thead><tr><th></th><th>Player</th>'+
+    '<th>Status</th></tr></thead><tbody>'+
+    rows.map((r,i)=>'<tr'+(S.me&&r.user_id===S.me.id?' class="pkme"':'')+'>'+
+      '<td class="pkrank">'+(i+1)+'</td><td class="pkwho">'+esc(r.name||'—')+'</td>'+
+      '<td>'+(r.alive?'Still alive':'Out — week '+esc(String(r.eliminated_week)))+'</td></tr>').join('')+
     '</tbody></table></div>'+
     '<div class="pkhint">Weeks scored: '+(s.weeks&&s.weeks.length?esc(s.weeks.join(', ')):'none yet')+'.</div>';
 }
@@ -219,6 +396,86 @@ async function pkPick(eventId,teamId,btn){
   S.pkBusy=false;
 }
 
+/* Confidence: the highest rank not already spoken for this week, so tapping a
+   team with no rank chosen yet still saves — the dropdown is for adjusting
+   afterward, not a precondition for picking at all. */
+function pkNextConfidence(){
+  const n=(S.pkData&&S.pkData.games||[]).length;
+  const used=new Set(Object.values((S.pkData&&S.pkData.myConfidence)||{}).map(Number));
+  for(let i=n;i>=1;i--)if(!used.has(i))return i;
+  return 1;
+}
+
+/* Ranks are unique per week, so handing a game a rank another game already holds
+   has to move that other game in the SAME request. Sending only the one leg is
+   what the server (correctly) rejects as a duplicate — and once every game is
+   ranked, that made it impossible to change any rank at all, since every target
+   is held by something. submitPicks() validates a request as a set, ignoring the
+   existing ranks of everything inside it, so a two-leg swap is accepted where two
+   sequential one-leg writes are not. Returns null if the move isn't legal. */
+function pkConfidencePicks(eventId,teamId,rank){
+  const conf=S.pkData.myConfidence||{},mine=S.pkData.myPicks||{};
+  const picks=[{event_id:eventId,selection_id:teamId,confidence:rank}];
+  const holder=Object.keys(conf).find(id=>id!==eventId&&Number(conf[id])===Number(rank));
+  if(!holder)return picks;
+  const g=(S.pkData.games||[]).find(x=>x.id===holder);
+  // The displaced game has to be movable. A locked one is not, and the server
+  // would refuse it anyway — say so here rather than firing a doomed request.
+  if(!g||g.locked||!mine[holder]){pkToast(rank+' pts is on a game that has already started');return null;}
+  let give=Number(conf[eventId])||0;
+  if(!give){
+    /* The game being ranked had no rank of its own to hand over, so the displaced
+       game needs a free slot — and it should be the one NEAREST what it just lost,
+       searching up first and then down. Taking the highest free slot instead (the
+       first version) meant bumping a game off rank 1 flung it all the way to 16,
+       which is both surprising and a big move in what it scores. There is always
+       somewhere to land: this game was unranked a moment ago, so its slot is the
+       one going spare. */
+    const n=(S.pkData.games||[]).length,want=Number(rank);
+    const used=new Set(Object.keys(conf).filter(id=>id!==holder&&id!==eventId).map(id=>Number(conf[id])));
+    used.add(want);
+    for(let i=want+1;i<=n;i++)if(!used.has(i)){give=i;break;}
+    if(!give)for(let i=want-1;i>=1;i--)if(!used.has(i)){give=i;break;}
+  }
+  if(!give)return null;
+  picks.push({event_id:holder,selection_id:mine[holder],confidence:give});
+  return picks;
+}
+
+async function pkPickConfidence(eventId,teamId,confidence){
+  if(S.pkBusy)return;
+  const picks=pkConfidencePicks(eventId,teamId,confidence);
+  if(!picks){pkLoadTab();return;}      // toast already shown; redraw to undo the select
+  S.pkBusy=true;
+  try{
+    const r=await api('/pools/'+S.pkPool.id+'/picks',
+      {method:'PUT',body:{week:S.pkData.week,picks:picks}});
+    if(r.rejected&&r.rejected.length)pkToast(r.rejected[0].why||'that pick was refused');
+  }catch(e){pkToast(e.message);}
+  // A full reload, not an optimistic patch: this pick touches both the team
+  // button and the rank select, and a swap moves a second row as well —
+  // simplest to just ask the server what is actually true now.
+  await pkLoadTab();
+  S.pkBusy=false;
+}
+
+/* Survivor: one pick for the week, which can jump between different games'
+   rows — simplest correct redraw is a full reload rather than hand-patching
+   whichever other row used to be "on", the used-team list, and elimination
+   status all at once. Picks happen once a week, not rapid-fire, so the extra
+   round trip is not felt the way it would be mid-way through a 16-game slate. */
+async function pkPickSurvivor(eventId,teamId){
+  if(S.pkBusy)return;
+  S.pkBusy=true;
+  try{
+    const r=await api('/pools/'+S.pkPool.id+'/picks',
+      {method:'PUT',body:{week:S.pkData.week,picks:[{event_id:eventId,selection_id:teamId}]}});
+    if(r.rejected&&r.rejected.length)pkToast(r.rejected[0].why||'that pick was refused');
+  }catch(e){pkToast(e.message);}
+  await pkLoadTab();
+  S.pkBusy=false;
+}
+
 function pkToast(msg){
   const el=$('#pkToast');if(!el)return;
   el.textContent=msg;el.classList.add('show');
@@ -232,10 +489,13 @@ function pkWire(){
     const name=($('#pkName').value||'').trim();
     S.pkErr='';
     try{
-      const r=await api('/pools',{method:'POST',body:{name:name,season:new Date().getFullYear(),league:'nfl'}});
+      const r=await api('/pools',{method:'POST',body:{name:name,season:new Date().getFullYear(),league:'nfl',mode:S.pkNewMode||'su'}});
       S.pkPools=null;S.pkPool=null;pkSet('pool',r.pool.id);renderPickem();
     }catch(e){S.pkErr=e.message;renderPickem();}
   };
+  document.querySelectorAll('[data-pknm]').forEach(b=>b.onclick=()=>{
+    S.pkNewMode=b.dataset.pknm;$('#main').innerHTML=pkNoPoolsHTML();pkWire();
+  });
   if($('#pkJoin'))$('#pkJoin').onclick=async()=>{
     const code=($('#pkCode').value||'').trim().toUpperCase();
     S.pkErr='';
@@ -282,17 +542,35 @@ function pkWire(){
   if($('#pkNext'))$('#pkNext').onclick=()=>{if(S.pkWeek<PK_MAX_WEEK){S.pkWeek++;renderPickem();}};
   if($('#pkCopy'))$('#pkCopy').onclick=()=>{
     const c=S.pkPool&&S.pkPool.join_code||'';
+    // A link a friend can just click beats a code they have to retype correctly —
+    // it opens straight to pick'em and joins on its own once they sign in.
+    const link=location.origin+location.pathname+'?join='+encodeURIComponent(c);
     // The clipboard API needs a secure context and can be refused; say so rather
     // than silently doing nothing.
     if(navigator.clipboard&&navigator.clipboard.writeText){
-      navigator.clipboard.writeText(c).then(()=>pkToast('Join code '+c+' copied'),()=>pkToast('Join code: '+c));
+      navigator.clipboard.writeText(link).then(()=>pkToast('Invite link copied'),()=>pkToast('Join code: '+c));
     }else pkToast('Join code: '+c);
   };
 }
 
 function pkWireBody(){
-  document.querySelectorAll('.pkteam[data-pkg]').forEach(b=>b.onclick=()=>
-    pkPick(b.dataset.pkg,b.dataset.pkteam,b));
+  document.querySelectorAll('.pkteam[data-pkg]').forEach(b=>b.onclick=()=>{
+    const mode=S.pkPool.mode;
+    if(mode==='survivor'){pkPickSurvivor(b.dataset.pkg,b.dataset.pkteam);return;}
+    if(mode==='confidence'){
+      const sel=document.querySelector('.pkconf[data-pkgc="'+b.dataset.pkg+'"]');
+      const c=(sel&&sel.value)?Number(sel.value):pkNextConfidence();
+      pkPickConfidence(b.dataset.pkg,b.dataset.pkteam,c);
+      return;
+    }
+    pkPick(b.dataset.pkg,b.dataset.pkteam,b);
+  });
+  document.querySelectorAll('.pkconf').forEach(s=>s.onchange=()=>{
+    const eventId=s.dataset.pkgc,teamId=S.pkData.myPicks[eventId];
+    if(!teamId){pkToast('Pick a team first');s.value='';return;}
+    if(!s.value)return;    // clearing the rank isn't a valid submit; leave the saved one
+    pkPickConfidence(eventId,teamId,Number(s.value));
+  });
   // The same modal the scores view opens — box score, rosters, injuries, drives.
   // A pool's league key is a LEAGUES key already, so nothing needs translating.
   document.querySelectorAll('[data-pkinfo]').forEach(b=>b.onclick=()=>

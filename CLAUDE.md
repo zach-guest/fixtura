@@ -809,6 +809,37 @@ Each was a real bug found in testing. All are non-obvious and easy to reintroduc
     only because a specific competition (EFL Cup) was known to be live and
     visibly missing; nothing would have flagged this on its own.
 
+26. **`CREATE TABLE IF NOT EXISTS` does not add a column to a table that
+    already exists.** Adding `picks.confidence` to `schema.sql` and re-running
+    it against local D1 for testing looked like it worked — no error — but the
+    table was already there from an earlier session, so the whole `CREATE
+    TABLE` statement was skipped and the column silently never appeared.
+    First real symptom was `D1_ERROR: no such column: p.confidence` from
+    `weekView()`, on *every* pool regardless of mode, because that query
+    always selects `p.confidence` — a schema change to one mode broke every
+    other mode's week view too, not just the new one. A new nullable column
+    on an existing table needs an explicit one-off `ALTER TABLE ... ADD
+    COLUMN`, run once against local (`--local`) and once against remote
+    (`--remote`) — `schema.sql`'s `CREATE TABLE IF NOT EXISTS` only ever
+    covers a database being set up from nothing.
+
+27. **A per-game lock check cannot see a survivor pool's pick.** Survivor is one
+    pick a *week*, and that pick lives on a **different event** from the one
+    being submitted — so `game.locked`, which only looks at the event in the
+    request, happily passes. The first version of `survivor` therefore let a
+    losing Thursday-night pick be abandoned on Sunday: picking any later
+    unlocked game deleted the Thursday row outright. Exactly the rule class
+    the module comment calls load-bearing, and it passed every test that
+    existed because none of them mixed a locked pick with an unlocked one.
+    The guard is a separate "is this week already spent" check on the user's
+    existing row for that week.
+    A second, subtler bug came from the *fix*: the guard read ESPN's live
+    state while the accompanying `DELETE` was guarded on the stored
+    `locks_at`. When those two disagree, the old row survives the delete
+    **and** the new row inserts — two picks in a one-pick-a-week pool, worse
+    than the escape being fixed. Both sides must read locked the same way;
+    they now treat a pick as locked if **either** signal says so.
+
 ## Known limitations
 
 - **Soccer player headshots are sparse.** ESPN doesn't license them for most
@@ -820,12 +851,14 @@ Each was a real bug found in testing. All are non-obvious and easy to reintroduc
   localStorage; syncing across devices requires signing in (see Account).
   Pick'em is the one genuinely multi-user feature — everything else is still
   single-player.
-- **Nobody is watching for errors.** Worker failures only go to
-  `console.error`/`wrangler tail`; there's no alerting and no health check
-  running on a schedule. The likelier real failure mode is picks quietly not
-  saving behind a clean 200 (an ESPN response shape changing under the Worker),
-  not a crash — a cron-triggered `/health` check plus a Worker error-rate email
-  alert would both be cheap and neither is built.
+- **Half of "nobody is watching for errors" is fixed.** A cron trigger (every
+  30 min, `runHealthCheck()` in `worker/src/index.js`) now checks D1, required
+  secrets, and that an ESPN scoreboard still returns `events[]` — the likelier
+  real failure mode is picks quietly not saving behind a clean 200, not a
+  crash. What's still missing: a Cloudflare dashboard Worker error-rate email
+  alert, so a thrown scheduled-handler error actually reaches anyone. That
+  half is a Zach-side dashboard click-through, same as the OAuth consent
+  screen.
 - **D1's backup window is thin for a season-long pool.** Point-in-time restore
   (Time Travel) is 7 days on the free Workers plan, 30 on the $5/mo plan. A
   mangled week-3 pick not noticed until week 5 is unrecoverable on the free

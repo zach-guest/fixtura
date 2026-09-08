@@ -141,6 +141,18 @@ function initSettings(){
       if(S.VIEW_ORDER.indexOf(qv)<0)S.VIEW_ORDER.unshift(qv);  // don't land on a hidden tab
     }
     if(qt&&GOLF_TOURS.some(t=>t[0]===qt))S.golfTour=qt;
+    // ?join=CODE — a pool invite link. The code isn't sensitive (it's meant to be
+    // shared), so unlike the OAuth token fragment this is left in the address bar;
+    // reloading it just re-runs a join, which the server already treats as a no-op.
+    // Stashed under the same sb-pk- prefix pickem.js's own pkGet/pkSet use, so it
+    // survives the full-page redirect through Google sign-in if the visitor isn't
+    // signed in yet — renderPickem() picks it up and joins once S.me exists.
+    const qj=p.get('join');
+    if(qj){
+      S.view='pickem';
+      if(S.VIEW_ORDER.indexOf('pickem')<0)S.VIEW_ORDER.unshift('pickem');
+      try{store('sb-pk-pendingjoin',qj.toUpperCase());}catch(e){}
+    }
   }catch(e){}
 }
 

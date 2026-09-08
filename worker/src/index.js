@@ -42,6 +42,17 @@ for (const name of Object.keys(ROUTES)) {
 }
 
 export default {
+  /**
+   * Runs on the schedule in `wrangler.jsonc` (`triggers.crons`), independent of
+   * any request — nobody is watching `wrangler tail` in real time. It throws on
+   * a problem rather than just logging it, because a thrown scheduled-handler
+   * error is what a Cloudflare dashboard Worker error-rate alert (set up
+   * separately — see DECISIONS.md) actually has something to fire on.
+   */
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runHealthCheck(env));
+  },
+
   async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '';
     const requestId = crypto.randomUUID();
@@ -95,6 +106,49 @@ async function health(env, origin) {
     missing_config: configured,
     proxy_routes: Object.keys(ROUTES),
   }, { origin, status: db === 'ok' ? 200 : 503 });
+}
+
+/**
+ * The scheduled check. Two things worth knowing when this fires:
+ *   - D1 unreachable / missing secrets: the same checks `/health` does, just
+ *     nobody has to remember to go look.
+ *   - The likelier real failure isn't the Worker crashing, it's ESPN quietly
+ *     changing shape under it — picks would stop saving behind a clean 200
+ *     with nothing in a log anyone reads. So this also asserts a live
+ *     scoreboard still looks like a scoreboard, not just that it responds.
+ */
+async function runHealthCheck(env) {
+  const problems = [];
+
+  try {
+    await env.DB.prepare('SELECT 1').first();
+  } catch (err) {
+    problems.push(`D1 unreachable: ${err}`);
+  }
+
+  const missing = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SESSION_SECRET'].filter((k) => !env[k]);
+  if (missing.length) problems.push(`missing config: ${missing.join(', ')}`);
+
+  try {
+    const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard', {
+      headers: { 'User-Agent': 'Fixtura/1.0 (+https://zach-guest.github.io/fixtura/)' },
+    });
+    if (!res.ok) {
+      problems.push(`ESPN scoreboard returned ${res.status}`);
+    } else {
+      const data = await res.json();
+      if (!Array.isArray(data.events)) problems.push('ESPN scoreboard response is missing events[] — the shape changed');
+    }
+  } catch (err) {
+    problems.push(`ESPN scoreboard fetch failed: ${err}`);
+  }
+
+  if (problems.length) {
+    const msg = `[health cron] ${problems.join(' | ')}`;
+    console.error(msg);
+    throw new Error(msg);
+  }
+  console.log('[health cron] ok');
 }
 
 /**

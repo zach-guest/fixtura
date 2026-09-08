@@ -344,6 +344,10 @@
     font-family:'Roboto Mono',monospace;font-size:10px;color:var(--dim-2);
     text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
   .pkodds{color:var(--dim);letter-spacing:.5px}
+  .pkconf{background:var(--panel-2);border:1px solid var(--line);color:var(--text);border-radius:6px;
+    padding:2px 5px;font-family:'Roboto Mono',monospace;font-size:10px;text-transform:uppercase;
+    letter-spacing:.5px}
+  .pkconf:disabled{opacity:.6}
   .pkinfo{margin-left:auto;background:none;border:0;color:var(--dim-2);
     font-family:'Roboto Mono',monospace;font-size:10px;letter-spacing:1px;
     text-transform:uppercase;text-decoration:underline;text-underline-offset:2px;padding:0}
@@ -374,6 +378,21 @@
   .pkteam.lock{cursor:default}
   .pknote{font-family:'Roboto Mono',monospace;font-size:11px;color:var(--dim);margin-bottom:9px}
   .pknote.warn{color:var(--accent)}
+  /* Survivor: the one pick that counts, lifted above a list that otherwise looks
+     exactly like the straight-up grid it does not behave like. */
+  .pkchosen{background:var(--panel);border:1px solid var(--accent);border-left-width:3px;
+    border-radius:10px;padding:9px 12px;margin-bottom:11px}
+  .pkchosen.win{border-color:var(--win)}
+  .pkchosen.loss{border-color:var(--loss)}
+  .pkchoselbl{font-family:'Roboto Mono',monospace;font-size:9.5px;color:var(--dim-2);
+    text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+  .pkchoseteam{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:700}
+  .pkchoseteam img{width:24px;height:24px;object-fit:contain;flex:none}
+  .pkchosemeta{font-family:'Roboto Mono',monospace;font-size:10px;color:var(--dim);
+    text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
+  /* Receded, not hidden: still readable, still tappable to change the pick. */
+  .pkgame.pkmuted{opacity:.45;transition:opacity .12s}
+  .pkgame.pkmuted:hover,.pkgame.pkmuted:focus-within{opacity:1}
   .pkhint{font-family:'Roboto Mono',monospace;font-size:10.5px;color:var(--dim-2);margin-top:11px;line-height:1.5}
   .pkgridwrap{padding:0}
   .pkgrid{border-collapse:collapse;font-size:12px;width:100%}

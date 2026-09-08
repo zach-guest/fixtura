@@ -49,6 +49,7 @@ export const S = {
   pkErr: '',
   pkBusy: false,
   pkOdds: false,
+  pkNewMode: 'su',
   wpSeries: [],
   wpTeams: {home:'HOME',away:'AWAY'},
   driveTimer: null,

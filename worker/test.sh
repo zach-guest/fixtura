@@ -253,7 +253,7 @@ chk "pool now has two members" 2 "$(jq_ $T/pd "len(d['members'])")"
 
 echo "== pools: bad input =="
 chk "empty name"        400 "$(jpost /pools $T/x POST "$A2" '{"name":"   ","season":2026}')"
-chk "unbuilt mode"      400 "$(jpost /pools $T/x POST "$A2" '{"name":"x","mode":"survivor"}')"
+chk "unbuilt mode"      400 "$(jpost /pools $T/x POST "$A2" '{"name":"x","mode":"ats"}')"
 chk "unknown league"    400 "$(jpost /pools $T/x POST "$A2" '{"name":"x","league":"cricket"}')"
 chk "60+ char name"     400 "$(jpost /pools $T/x POST "$A2" "{\"name\":\"$(python3 -c 'print("z"*61)')\"}")"
 chk "bad join code"     404 "$(jpost /pools/join $T/x POST "$A2" '{"code":"ZZZZZZ"}')"
@@ -367,6 +367,115 @@ curl -s -o $T/st2 "$B/pools/$OLDPOOL/standings" -H "Origin: $APP" -H "$A2"
 chk "re-scoring is idempotent" 16 "$($WRANGLER d1 execute fixtura --local --json \
   --command "SELECT COUNT(*) AS n FROM results WHERE pool_id=$OLDPOOL" 2>/dev/null \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)[0]["results"][0]["n"])' 2>/dev/null || echo ERR)"
+echo "== confidence mode =="
+code=$(jpost /pools $T/cc POST "$A2" '{"name":"Conf Pool","season":2026,"league":"nfl","mode":"confidence"}')
+chk "create" 201 "$code"
+CPOOL=$(jq_ $T/cc "['pool']['id']")
+chk "  mode sticks" "confidence" "$(jq_ $T/cc "['pool']['mode']")"
+
+curl -s -o $T/cwk "$B/pools/$CPOOL/week/1" -H "Origin: $APP" -H "$A2"
+CG1=$(jq_ $T/cwk "d['games'][0]['id']"); CH1=$(jq_ $T/cwk "d['games'][0]['home']['id']")
+CG2=$(jq_ $T/cwk "d['games'][1]['id']"); CH2=$(jq_ $T/cwk "d['games'][1]['home']['id']")
+NGAMES=$(jq_ $T/cwk "len(d['games'])")
+
+CPICKS="{\"week\":1,\"picks\":[{\"event_id\":\"$CG1\",\"selection_id\":\"$CH1\",\"confidence\":3},{\"event_id\":\"$CG2\",\"selection_id\":\"$CH2\",\"confidence\":5}]}"
+chk "valid confidence picks accepted" 200 "$(jpost /pools/$CPOOL/picks $T/csp PUT "$A2" "$CPICKS")"
+chk "  both saved" 2 "$(jq_ $T/csp "len(d['saved'])")"
+
+jpost /pools/$CPOOL/picks $T/cdup PUT "$A2" \
+  "{\"week\":1,\"picks\":[{\"event_id\":\"$CG2\",\"selection_id\":\"$CH2\",\"confidence\":3}]}" >/dev/null
+chk "reusing a confidence rank is refused" 0 "$(jq_ $T/cdup "len(d['saved'])")"
+chk "  and says why" "that confidence rank is already used this week" "$(jq_ $T/cdup "d['rejected'][0]['why']")"
+
+jpost /pools/$CPOOL/picks $T/coor PUT "$A2" \
+  "{\"week\":1,\"picks\":[{\"event_id\":\"$CG1\",\"selection_id\":\"$CH1\",\"confidence\":999}]}" >/dev/null
+chk "out-of-range confidence is refused" "confidence must be 1..$NGAMES" "$(jq_ $T/coor "d['rejected'][0]['why']")"
+
+curl -s -o $T/cwk2 "$B/pools/$CPOOL/week/1" -H "Origin: $APP" -H "$A2"
+chk "myConfidence is exposed on the week view" 3 "$(jq_ $T/cwk2 "d['myConfidence']['$CG1']")"
+
+# A rank change is only expressible as a SWAP, because ranks are unique. Sending
+# both legs together must work — otherwise, once every game is ranked, no rank
+# could ever be changed again. The frontend builds exactly this body.
+CSWAP="{\"week\":1,\"picks\":[{\"event_id\":\"$CG1\",\"selection_id\":\"$CH1\",\"confidence\":5},{\"event_id\":\"$CG2\",\"selection_id\":\"$CH2\",\"confidence\":3}]}"
+chk "swapping two ranks in one request is accepted" 200 "$(jpost /pools/$CPOOL/picks $T/cswap PUT "$A2" "$CSWAP")"
+chk "  both legs saved" 2 "$(jq_ $T/cswap "len(d['saved'])")"
+chk "  none rejected" 0 "$(jq_ $T/cswap "len(d['rejected'])")"
+curl -s -o $T/cwk3 "$B/pools/$CPOOL/week/1" -H "Origin: $APP" -H "$A2"
+chk "  the ranks actually swapped" "5 3" "$(jq_ $T/cwk3 "str(d['myConfidence']['$CG1'])+' '+str(d['myConfidence']['$CG2'])")"
+
+echo "== survivor mode =="
+code=$(jpost /pools $T/sc POST "$A2" '{"name":"Survivor Pool","season":2026,"league":"nfl","mode":"survivor"}')
+chk "create" 201 "$code"
+SPOOL=$(jq_ $T/sc "['pool']['id']")
+chk "  mode sticks" "survivor" "$(jq_ $T/sc "['pool']['mode']")"
+
+curl -s -o $T/swk "$B/pools/$SPOOL/week/1" -H "Origin: $APP" -H "$A2"
+SG1=$(jq_ $T/swk "d['games'][0]['id']"); SH1=$(jq_ $T/swk "d['games'][0]['home']['id']")
+SA1=$(jq_ $T/swk "d['games'][0]['away']['id']")
+SG2=$(jq_ $T/swk "d['games'][1]['id']"); SH2=$(jq_ $T/swk "d['games'][1]['home']['id']")
+
+SPICK1="{\"week\":1,\"picks\":[{\"event_id\":\"$SG1\",\"selection_id\":\"$SH1\"}]}"
+chk "one pick a week is accepted" 200 "$(jpost /pools/$SPOOL/picks $T/ssp PUT "$A2" "$SPICK1")"
+SPICK2="{\"week\":1,\"picks\":[{\"event_id\":\"$SG1\",\"selection_id\":\"$SH1\"},{\"event_id\":\"$SG2\",\"selection_id\":\"$SH2\"}]}"
+chk "a second team the same week is refused outright" 400 "$(jpost /pools/$SPOOL/picks $T/ssp2 PUT "$A2" "$SPICK2")"
+
+SPICK3="{\"week\":1,\"picks\":[{\"event_id\":\"$SG2\",\"selection_id\":\"$SH2\"}]}"
+chk "switching teams the same week is fine" 200 "$(jpost /pools/$SPOOL/picks $T/ssw PUT "$A2" "$SPICK3")"
+curl -s -o $T/swk2 "$B/pools/$SPOOL/week/1" -H "Origin: $APP" -H "$A2"
+chk "  the old week-1 row is gone" False "$(jq_ $T/swk2 "'$SG1' in d['myPicks']")"
+chk "  the new one is there" "$SH2" "$(jq_ $T/swk2 "d['myPicks']['$SG2']")"
+
+echo "== THE SURVIVOR LOCK: a week whose pick kicked off is spent =="
+# Survivor's one pick a week lives on a DIFFERENT event from any new submission,
+# so the per-game locked check cannot see it. Without a guard, a losing Thursday
+# pick could be abandoned on Sunday and the delete-then-insert would erase it.
+# Seed a week-2 pick whose game has already started, the way Sunday sees Thursday.
+UID_A=$($WRANGLER d1 execute fixtura --local --json --command \
+  "SELECT id FROM users WHERE sub='test-sub-1'" 2>/dev/null \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)[0]["results"][0]["id"])' 2>/dev/null)
+$WRANGLER d1 execute fixtura --local --command \
+"INSERT OR REPLACE INTO picks (pool_id,user_id,event_id,week,selection_id,locks_at,created_at,updated_at)
+ VALUES ($SPOOL,$UID_A,'$SG1',2,'$SH1',1,$NOW,$NOW);" >/dev/null 2>&1
+SESC="{\"week\":2,\"picks\":[{\"event_id\":\"$SG2\",\"selection_id\":\"$SH2\"}]}"
+chk "switching away from a kicked-off pick is refused" 400 "$(jpost /pools/$SPOOL/picks $T/sesc PUT "$A2" "$SESC")"
+chk "  and says why" "your pick for this week has already kicked off" "$(jq_ $T/sesc "['error']")"
+chk "  the locked pick is still there" 1 "$($WRANGLER d1 execute fixtura --local --json \
+  --command "SELECT COUNT(*) AS n FROM picks WHERE pool_id=$SPOOL AND week=2 AND event_id='$SG1'" 2>/dev/null \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)[0]["results"][0]["n"])' 2>/dev/null || echo ERR)"
+chk "  and no second pick was created" 1 "$($WRANGLER d1 execute fixtura --local --json \
+  --command "SELECT COUNT(*) AS n FROM picks WHERE pool_id=$SPOOL AND week=2" 2>/dev/null \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)[0]["results"][0]["n"])' 2>/dev/null || echo ERR)"
+
+echo "== survivor: elimination, seeded against a finished season =="
+old=$(jpost /pools $T/sold POST "$A2" '{"name":"Survivor Last Season","season":2025,"league":"nfl","mode":"survivor"}')
+SOLDPOOL=$(jq_ $T/sold "['pool']['id']")
+jpost /pools/join $T/soldj POST "$B_AUTH" "{\"code\":\"$(jq_ $T/sold "['pool']['join_code']")\"}" >/dev/null
+python3 - "$SOLDPOOL" "$NOW" > $T/sseed.sql <<'PY'
+import sys,json,urllib.request
+pool,now=sys.argv[1],sys.argv[2]
+u="https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2025&seasontype=2&week=1"
+r=urllib.request.Request(u,headers={"User-Agent":"Fixtura/1.0 (+https://zach-guest.github.io/fixtura/)"})
+d=json.load(urllib.request.urlopen(r))
+e=d["events"][0]
+c=e["competitions"][0]; cs=c["competitors"]
+w=[x for x in cs if x.get("winner")][0]["team"]["id"]
+l=[x for x in cs if x["team"]["id"]!=w][0]["team"]["id"]
+out=[]
+for sub,sel in (("test-sub-1",w),("test-sub-2",l)):
+    out.append(f"INSERT OR REPLACE INTO picks (pool_id,user_id,event_id,week,selection_id,locks_at,created_at,updated_at) "
+               f"VALUES ({pool},(SELECT id FROM users WHERE sub='{sub}'),'{e['id']}',1,'{sel}',0,{now},{now});")
+print("\n".join(out))
+PY
+$WRANGLER d1 execute fixtura --local --file=$T/sseed.sql >/dev/null 2>&1
+
+curl -s -o $T/sst "$B/pools/$SOLDPOOL/standings" -H "Origin: $APP" -H "$A2"
+chk "the winner-picker is still alive" True "$(jq_ $T/sst "any(r['alive'] and r['eliminated_week'] is None for r in d['standings'])")"
+chk "the loser-picker is eliminated in week 1" True "$(jq_ $T/sst "any((not r['alive']) and r['eliminated_week']==1 for r in d['standings'])")"
+
+SPICK4="{\"week\":2,\"picks\":[{\"event_id\":\"$SG1\",\"selection_id\":\"$SH1\"}]}"
+chk "an eliminated player cannot pick again" 400 "$(jpost /pools/$SOLDPOOL/picks $T/selim2 PUT "$B_AUTH" "$SPICK4")"
+
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

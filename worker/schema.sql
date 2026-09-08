@@ -61,9 +61,9 @@ CREATE TABLE IF NOT EXISTS pools (
   season      INTEGER NOT NULL,                  -- 2026
   -- How this pool scores. Set at creation and never changed, because changing it
   -- would silently reinterpret every pick already made. New modes are new pools.
-  --   'su'         straight up, one point a winner        (built now)
-  --   'confidence' rank your picks, score the rank        (nullable int on picks)
-  --   'survivor'   one team a week, no reuse, one strike  (unique index on picks)
+  --   'su'         straight up, one point a winner        (built)
+  --   'confidence' rank your picks, score the rank        (picks.confidence; built)
+  --   'survivor'   one team a week, no reuse, one strike  (enforced in pools.js; built)
   --   'ats'        against the spread                     (needs the line snapshotted)
   --   'golf6'      six golfers, lowest combined to-par
   --   'f1podium'   top three, per race
@@ -96,6 +96,12 @@ CREATE TABLE IF NOT EXISTS picks (
   -- golf pool (a golf competitor's id IS the athlete id), a driver id for F1.
   -- One column because ESPN's ids are already the common currency here.
   selection_id TEXT   NOT NULL,
+  -- Only meaningful for a 'confidence' pool: this pick's rank, 1..(games that
+  -- week), unique per user per week. NULL for every other mode. Survivor needs
+  -- no column of its own — "one pick a week, no team reused" is enforced in
+  -- pools.js against this same table, not a schema constraint, because a
+  -- partial index would need pools.mode, which isn't on this table.
+  confidence  INTEGER,
   locks_at    INTEGER NOT NULL,                  -- kickoff, unix seconds
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL,

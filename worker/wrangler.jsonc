@@ -24,6 +24,12 @@
     "head_sampling_rate": 1
   },
 
+  // Every 30 minutes: a health/shape check independent of any request, since
+  // nobody is watching `wrangler tail` live. See runHealthCheck() in index.js.
+  "triggers": {
+    "crons": ["*/30 * * * *"]
+  },
+
   // `database_id` is not a secret — it is useless without an authenticated
   // account — so it is fine in git.
   "d1_databases": [
