@@ -92,6 +92,67 @@ what is planned, which is read occasionally rather than every turn. Keep it that
      email is **not safe** unless the email is provider-verified — an
      unverified match is an account-takeover hole. Not adding before Week 1.
 
+## The redesign + NFL dashboards track (opened 2026-09-07)
+
+A visual overhaul plus NFL statistical dashboards, scoped in a planning session
+on 2026-09-07. **Nothing visual is approved.** One piece shipped; everything
+else is a draft awaiting Zach's review, and he is taking the design half to
+another tool to try implementing the themes.
+
+**Shipped and live:** the leaderboard snapshot cron (`worker/src/trends.js`,
+`stat_snapshots`, `GET /trends/leaders`), deployed to production 2026-09-07 and
+verified firing. It shipped first and alone because it is the only piece with a
+real deadline: ESPN keeps no leaderboard history and snapshots cannot be
+backfilled, so every week it does not run is a week lost permanently. See the
+Worker section and hard-won details 28–29 in `CLAUDE.md`. **It is deployed from
+the `redesign-nfl-dashboards` branch and is not on `main`** — read the deploy
+hazard note in `CLAUDE.md` before running `npm run deploy`.
+
+**Draft, nothing approved:** a prototype of the new design language covering all
+twelve screens (the seven app views plus five NFL levels) at mobile and desktop,
+in seven themes. Built entirely on live ESPN/Jolpica data. It exists only as a
+published artifact, not in the repo — see `HANDOFF-REDESIGN.md` for everything
+needed to pick the work up, including the palettes.
+
+**Settled with Zach at the outset:**
+
+- Adopt the card/hero editorial language from his reference images, rather than
+  refining the current dense data-terminal look. **But** mobile and desktop must
+  get genuinely different layouts, not one fluid layout squeezed at 700px.
+- An editorial **serif** joins the type system — he specifically wanted the
+  "Times New Roman-esque" face from the reference, on some things but not all.
+  Numbers stay in Roboto Mono; the serif never touches tabular data.
+- **NFL only** for the dashboards. Other sports will need their own splits and
+  their own structure — do **not** build a generic multi-sport dashboard
+  abstraction and try to make football fit it.
+
+**His feedback on the first prototype, 2026-09-07 — not yet acted on:**
+
+- **Drop the Division dashboard entirely.** Four teams did not earn a view.
+- **Probably merge Conference and League** into one view rather than two
+  drill levels. This collapses the original five levels toward three
+  (league/conference · team · player).
+- Approved as "a good draft" only; the content of each page is still open, and
+  he wants to walk the remaining views before anything is built.
+
+**Still open, and blocking a real build:**
+
+1. **Which serif** — three candidates were shown live (Newsreader, Source
+   Serif 4, Playfair Display); no pick made.
+2. **Do `HOME` and `NFL` deserve top-level tabs?** The proposal takes the tab
+   row from six views to eight. Both additions are arguable, and `HOME` in
+   particular was invented wholesale — the app has never had a landing surface.
+3. **Which four tabs are permanent** in a mobile bottom bar, given `VIEW_ORDER`
+   is user-reorderable and will hold more views than a bar can show. The
+   proposed rule is first four plus a More sheet.
+4. **How far the Retro Card theme goes.** A Fixtura theme is a palette; the
+   halftone and heavier card edges were added as two extra tokens (`--texture`,
+   `--edge`), but the starbursts, ribbons and distressed display type in the
+   reference are *illustration*, not colour — making the card language itself
+   that loud is a separate decision, not a theme toggle.
+5. Seven themes now means **every new colour must exist in all seven** or one
+   theme silently breaks. This was already true at five; it is more expensive now.
+
 ## Requested but not yet built
 
 - Team social media links. ESPN carries some; recent *posts* are not feasible —

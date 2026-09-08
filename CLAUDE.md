@@ -415,6 +415,14 @@ bundled by wrangler, so modules and dependencies are fine here.
 
 **It has two lanes, and the whole file layout exists to keep them apart.**
 
+A third shape was added 2026-09-07 and does not break the rule below, but is
+worth naming because it is neither of the two: `src/trends.js` is **public and
+cacheable like the proxy lane, but served from D1 rather than an upstream**. It
+is not a proxy route because there is nothing upstream to proxy. It returns
+`pub()`, it is matched before the proxy table, and `LOCAL_PUBLIC_PREFIXES` in
+`index.js` keeps it provably disjoint from both the proxy routes and the private
+prefixes — the same assertion that already guarded `picks`.
+
 | Lane | Files | Answer | Cached? |
 |---|---|---|---|
 | PUBLIC | `src/proxy.js` | same for everyone | yes, edge-cached per route TTL |
@@ -464,9 +472,34 @@ that.
 
 Routes: `GET /health` (includes a real D1 check and names any missing config),
 `/auth/google/start`, `/auth/google/callback`, `POST /auth/logout`, `GET /me`,
-`GET|PUT /me/settings`, and pick'em under `/pools` (see below). `picks` stays
+`GET|PUT /me/settings`, `GET /trends/leaders` (see below), and pick'em under
+`/pools` (see below). `picks` stays
 reserved in the router so it can never become a proxy route, but everything
 pick'em-related lives under `/pools` — a pick only means anything inside a pool.
+
+### Leaderboard history (`src/trends.js`)
+
+`GET /trends/leaders?league=nfl&season=2026&weeks=2` — the most recent weekly
+snapshots of a league's statistical leaderboard, newest first. An empty
+`snapshots` array is a normal answer, not an error: early in a season there is
+genuinely no history yet.
+
+**This exists because ESPN has no historical leaderboard and cannot be asked for
+one after the fact** (both routes in were measured — see hard-won detail 29). So
+movement is *recorded as it happens* by `captureLeaderSnapshot()`, run from the
+same 30-minute cron as the health check. The guard is a single
+`SELECT ... WHERE league/season/week`, which turns 48 runs a day into one row-set
+a week; a row means "the first capture taken during ESPN's week N", which is why
+`captured_at` is stored and why any UI must label movement by date rather than
+claiming totals-through-week-N.
+
+**A snapshot cannot be backfilled.** Whatever week this first runs in is the
+first week of history that will ever exist. It went live 2026-09-07, two days
+before Week 1.
+
+Standings movement deliberately does **not** live here: a past week's results are
+still fetchable (`scoreboard?seasontype=2&week=N`), so records and seeding stay
+reconstructable on demand rather than becoming a second copy free to drift.
 
 ### Pick'em (`src/pools.js`)
 
@@ -519,6 +552,17 @@ curl https://fixtura-api.fixturaapp.workers.dev/health
 
 `/health` is the first thing to check after any deploy: it reports whether D1 is
 reachable and which secrets are still unset, **by name only**.
+
+> ⚠️ **Deployed-from-a-branch hazard, live as of 2026-09-07.** `wrangler deploy`
+> ships whatever is in the working directory, with no notion of branches. The
+> snapshot cron (`src/trends.js`, the `stat_snapshots` table, the `/trends`
+> route) is **deployed and running in production** but lives only on the
+> `redesign-nfl-dashboards` branch — it is *not* on `main`. Running
+> `npm run deploy` from `main` would therefore silently **revert the production
+> worker**, stopping the weekly capture and 404ing `/trends`, with no error
+> anywhere. The `stat_snapshots` rows would survive, but the weeks missed while
+> it was reverted are gone for good (they cannot be backfilled). Either merge
+> the branch or deploy only from it until merged.
 
 The account's workers.dev subdomain is `fixturaapp`, set once at the account
 level, so every Worker deployed from this account is
@@ -840,6 +884,41 @@ Each was a real bug found in testing. All are non-obvious and easy to reintroduc
     than the escape being fixed. Both sides must read locked the same way;
     they now treat a pick as locked if **either** signal says so.
 
+28. **ESPN reports a season as under way before that season's stat endpoints
+    exist.** Measured 2026-09-07, two days before kickoff: the NFL scoreboard
+    already returned `season.year 2026`, `season.type 2` (regular season) and
+    `week.number 1`, while
+    `.../seasons/2026/types/2/leaders` was still a flat **404**. Anything that
+    derives "the season is live" from the scoreboard and then fetches a
+    season-scoped stat endpoint will therefore throw for the entire gap between
+    those two facts. In the snapshot cron this would have meant a thrown
+    scheduled-handler error **every 30 minutes until the first game** — the
+    same alert-fatigue failure the off-season guard already existed to prevent,
+    arriving through a different door. A 4xx from a season-scoped stat endpoint
+    means "not published yet" and must be a quiet skip; only 5xx and network
+    failures deserve to throw. Caught by running the deployed cron against live
+    ESPN rather than trusting the local test, which passed because it seeded D1
+    directly and never called ESPN at all.
+
+29. **ESPN has no historical standings or leaderboard, and one of the two ways
+    of asking fails silently.** Both measured 2026-09-07, and worth recording so
+    nobody spends the afternoon re-discovering them:
+    - `.../seasons/{y}/types/2/weeks/{n}/leaders` — **404**. There is no
+      week-scoped leaders endpoint.
+    - `standings?season=2025&week=N` — **the `week` parameter is accepted and
+      then ignored.** Weeks 3, 8 and 15 all return byte-identical *final*
+      records. This is the dangerous one: it returns 200 with plausible data, so
+      a "historical" feature built on it would look like it worked and be wrong
+      all season.
+    What *does* work is `scoreboard?seasontype=2&week=N&dates=YYYY`, which
+    returns that week's real games and `teamsOnBye`. So **standings and seeding
+    history are reconstructable** by accumulating results week by week, and need
+    no storage — but **leaderboard history is not**, which is the entire reason
+    `stat_snapshots` and the capture cron exist (see the Worker section).
+    Note also `?level=3` is required on the standings endpoint to get
+    conference → division → team nesting; without it you get conferences only,
+    with no divisions and no per-division grouping.
+
 ## Known limitations
 
 - **Soccer player headshots are sparse.** ESPN doesn't license them for most
@@ -862,7 +941,11 @@ Each was a real bug found in testing. All are non-obvious and easy to reintroduc
 - **D1's backup window is thin for a season-long pool.** Point-in-time restore
   (Time Travel) is 7 days on the free Workers plan, 30 on the $5/mo plan. A
   mangled week-3 pick not noticed until week 5 is unrecoverable on the free
-  tier — upgrade before real picks exist.
+  tier — upgrade before real picks exist. **This got sharper on 2026-09-07:**
+  `stat_snapshots` now accumulates leaderboard history that *cannot be
+  regenerated from any upstream* (hard-won detail 29). Losing those rows loses
+  the season's movement data permanently, where a lost pick can at least be
+  retyped.
 - **Betting data is limited** to whatever ESPN's `pickcenter` returns.
 
 ## Open decisions and roadmap
