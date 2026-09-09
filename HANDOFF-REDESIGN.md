@@ -3,8 +3,14 @@
 **Current status — 2026-09-09:** Zach reviewed the batch in §20–22 locally
 (Broadsheet default, the app-wide type-system change with two live-reviewed
 corrections, the NFL News tab, the detailed NFL team Schedule tab, and
-per-team news) and asked to deploy it. Pushed to `main`/`origin/main` and live
-on GitHub Pages. Sections 17–19 contain the prior implementation and release
+per-team news) and asked to deploy it. Pushed to `main`/`origin/main` as commit
+`b89714c` and confirmed live on GitHub Pages (polled until the served ETag and
+`data-theme` changed; the deploy took about 40 seconds to propagate).
+Production spot-checks after the deploy: default theme is `broadsheet`, the
+FIXTURA `<h1>` no longer carries the stray `.cond` class, `nav.views button`
+serves the corrected sans-serif rule, and both the News tab and team Schedule
+code are present in the served JS. The Worker (untouched by this deploy) is
+still healthy. Sections 17–19 contain the prior implementation and release
 record. Older sections preserve the original Claude handoff and historical
 status.
 
