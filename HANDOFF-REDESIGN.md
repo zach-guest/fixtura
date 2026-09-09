@@ -1,14 +1,20 @@
 # Handoff — redesign + NFL dashboards
 
-**Current status:** see the 2026-09-08 Codex update at the end. The original
-sections below preserve the Claude handoff and its historical status.
+**Current status — 2026-09-09:** `main` and `origin/main` are aligned. The
+frontend is live on GitHub Pages and the Worker stats storage, capture, and read
+routes are deployed and healthy. Sections 17–19 contain the latest implementation
+and release record. Next product work is contextual NFL and team news, followed
+by the detailed NFL team schedule. Older sections preserve the original Claude
+handoff and historical status.
 
-Written 2026-09-07, at the end of the planning/prototype session that opened this
-track. Everything here is either a fact verified that day or a decision Zach
-actually made. **Nothing visual is approved** — the prototype is a draft.
+The original sections were written 2026-09-07 at the end of the planning/prototype
+session that opened this track. Their facts and decisions reflect that date; the
+prototype had not yet been approved. Later dated sections record the visual work
+that has since shipped.
 
-Read `AGENTS.md` first for current Codex operating instructions; this document assumes
-them and does not repeat them. The short version of the ones that bite hardest:
+Read `AGENTS.md` first for current operating instructions, including the shared
+Codex/Claude continuity protocol; this document does not repeat them. The short
+version of the rules that bite hardest:
 **no build step, no bundler, no framework, no npm at runtime**, ES modules loaded
 as static files, one flat stylesheet, `esc()` on every string rendered into HTML,
 and **no invented data** — if ESPN doesn't publish it, don't model it.
@@ -20,16 +26,19 @@ and **no invented data** — if ESPN doesn't publish it, don't model it.
 | Piece | State |
 |---|---|
 | Leaderboard snapshot cron | **Shipped, deployed, verified in production** |
-| Everything visual | **Draft only.** Lives in a published artifact, not in the repo |
-| Repo branch | `redesign-nfl-dashboards`, not merged to `main` |
+| Player-by-game capture and reads | **Shipped, deployed, verified in production** |
+| NFL dashboard and two new themes | **Shipped to GitHub Pages from `main`** |
+| Next product slice | Contextual NFL/team news, then detailed team schedule |
+| Repo branch | `main`, aligned with `origin/main` |
 
-### The one hazard to know before touching anything
+### Historical Worker branch hazard — resolved, still verify before deployment
 
 `wrangler deploy` ships the working directory and knows nothing about branches.
-`worker/src/trends.js` is **running in production but exists only on the
-`redesign-nfl-dashboards` branch**. Deploying from `main` silently reverts it —
-the weekly capture stops and `/trends` 404s, with no error anywhere. Merge the
-branch, or deploy only from it.
+On 2026-09-07, `worker/src/trends.js` was running in production but existed only
+on `redesign-nfl-dashboards`. That branch was fast-forwarded into `main` on
+2026-09-09, so the immediate mismatch is resolved. Before any future Worker
+deployment, still verify that the outgoing tree contains the trends route,
+player-game capture, schema, and scheduled wiring.
 
 This matters more than a normal revert because **snapshots cannot be
 backfilled** (see §3). Weeks missed are gone permanently.

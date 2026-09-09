@@ -53,16 +53,53 @@ silently substituting another model.
   stats-storage work. Prefer later dated decisions over superseded proposals.
 - `HANDOFF-REDESIGN.md` contains redesign status, preview locations, and next steps.
   Read it before redesign work; a preview is not the deployed app.
-- `CLAUDE.md` remains a legacy reference with detailed bug narratives. Consult
-  relevant sections when needed, but do not inherit obsolete Claude tool/sandbox
-  commands or treat its old implementation status as current. Do not delete it
-  without telling the user first.
+- `CLAUDE.md` is Claude Code's compatibility entry point and retains detailed
+  bug narratives. Its cross-tool handoff protocol is shared with this file.
+  Consult relevant historical sections when needed, but do not inherit obsolete
+  tool/sandbox commands or treat old implementation status as current. Do not
+  delete it without telling the user first.
 - Keep history and handoff context separate from these operating rules. Record
   new decisions in `DECISIONS.md` and implementation status in the handoff.
 - Zach is strong in SQL, learning Python and JavaScript, and tests with screenshots.
   Explain outcomes plainly, with technical detail where useful. Diagnose using
   actual errors, statuses, and response shapes; do not stack speculative fallbacks.
   State missing data and limitations honestly.
+
+## Cross-tool continuity protocol
+
+This repository may move between Codex and Claude Code. Repository state is the
+handoff; chat history is supporting context only. Both tools must follow this
+protocol.
+
+At the start of a session:
+
+1. Read the applicable tool instructions, then `DECISIONS.md` and the opening
+   status plus newest dated sections of `HANDOFF-REDESIGN.md`.
+2. Inspect `git status --short --branch`, the recent commit log, branch tracking,
+   and relevant diffs before editing. Fetch remote state when release or branch
+   status matters.
+3. Treat later dated decisions and handoff sections as superseding older plans.
+   Historical statements remain useful evidence, but are not current status.
+4. Verify external state directly when it matters. A note that something was
+   deployed, migrated, or healthy is not a substitute for checking the actual
+   production endpoint before another release.
+
+During and at the end of a meaningful work slice:
+
+- Keep decisions in `DECISIONS.md`, implementation/release status in
+  `HANDOFF-REDESIGN.md`, and durable operating rules in the tool instruction
+  files. Do not leave load-bearing facts only in chat.
+- Record the date, scope, branch, commit, deployed/not-deployed state, validation
+  performed, real-data limitations, unresolved risks, and the exact next
+  implementation-ready task.
+- Keep commits focused and named for the behavior they deliver. Do not create a
+  vague WIP commit solely for handoff; describe unfinished working-tree changes
+  precisely when work cannot be completed.
+- Before yielding, report whether the working tree is clean and whether the local
+  branch, remote branch, frontend, Worker, and database are aligned where relevant.
+- The incoming tool must inspect and review existing changes rather than redo them
+  or assume they are correct. Continue from the documented next step unless Zach
+  changes the goal.
 
 ## Architecture and repository map
 

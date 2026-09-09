@@ -6,12 +6,54 @@ fixture calendar. Built to replace juggling ESPN, Sleeper, and a pile of apps.
 Called "Pressbox" until 2026-08-16. The name is provisional; the old one was
 dropped because the domain was taken.
 
+## Start here when resuming from Codex
+
+`AGENTS.md` is the current repository-wide operating contract, including
+architecture invariants, validation, deployment safeguards, and Codex delegation
+rules. Claude Code should follow the shared project rules in that file while
+ignoring Codex-only model/tool mechanics. Read `DECISIONS.md` and the opening
+status plus newest dated sections of `HANDOFF-REDESIGN.md` before continuing a
+redesign, stats, account, or release task. Later dated entries supersede older
+plans and historical status.
+
+## Cross-tool continuity protocol
+
+This repository may move between Claude Code and Codex. Repository state is the
+handoff; chat history is supporting context only.
+
+At the start of a session:
+
+1. Inspect `git status --short --branch`, recent commits, branch tracking, and
+   relevant diffs before editing. Fetch remote state when release or branch status
+   matters.
+2. Read the applicable instructions, `DECISIONS.md`, and the latest handoff
+   status. Do not restart completed work or revive a superseded design.
+3. Verify production, migration, and external-provider state directly when it
+   affects the task; do not rely solely on a previous assistant's claim.
+
+During and at the end of a meaningful work slice:
+
+- Put settled product and architecture choices in `DECISIONS.md`,
+  implementation and release status in `HANDOFF-REDESIGN.md`, and durable
+  operating rules in `AGENTS.md` or this file. Do not leave essential facts only
+  in chat.
+- Record the date, scope, branch, commit, deployed/not-deployed state, validation,
+  real-data limitations, unresolved risks, and exact next implementation-ready
+  task.
+- Keep commits focused. Do not make a vague WIP commit only to create a handoff;
+  describe unfinished working-tree changes precisely if a slice cannot be
+  completed.
+- Before yielding, report whether the tree is clean and whether local, remote,
+  frontend, Worker, and database state are aligned where relevant.
+- Review existing work before changing it. Continue from the documented next step
+  unless Zach changes the goal.
+
 ## The hard constraint
 
 **No build step, no bundler, no framework, no npm dependency at runtime.**
-Google Fonts is the only external asset; everything else the browser loads
-directly, as static files. Deployed by pushing files to a static host — `git
-push`, nothing compiles.
+The frontend loads directly as static files; Google Fonts, provider-hosted media,
+and the documented sports/API endpoints are established external resources.
+Deployed by pushing files to a static host — `git push`, nothing compiles.
 
 This used to also mean "one file." That part was relaxed on 2026-08-23: the
 frontend is now `index.html` (a shell) plus `styles.css` plus `src/*.js`, loaded
@@ -74,13 +116,13 @@ or transitively. Roughly leaf-to-root:
   the Worker; see `DECISIONS.md`.
 - `account.js` — sign-in, sign-out, settings sync, favourites, the tab-layout
   bootstrap (`initSettings`, `reconcileViews`).
-- `views/` — one file per tab: `scores.js`, `teams.js`, `f1.js`, `golf.js`,
-  `calendar.js`, `pickem.js`.
+- `views/` — one file per tab: `scores.js`, `teams.js`, `nfl.js`, `f1.js`,
+  `golf.js`, `calendar.js`, `pickem.js`.
 - `components/` — shared UI pieces used by more than one view: `gamecard.js`,
-  `modal.js` (the whole game-detail and player modal, including soccer lineups
-  and box scores), `drive.js`, `ticker.js`, `settings.js` (the settings panel
-  *and* the build-freshness check it shares with `updatecheck.js`),
-  `updatecheck.js`.
+  `dashboard.js`, `modal.js` (the whole game-detail and player modal, including
+  soccer lineups and box scores), `drive.js`, `ticker.js`, `settings.js` (the
+  settings panel *and* the build-freshness check it shares with
+  `updatecheck.js`), `updatecheck.js`.
 
 **Circular imports exist and are intentional**, not a smell to "fix": `app.js`
 defines `render()`/`renderNav()`, which `components/settings.js` needs to
