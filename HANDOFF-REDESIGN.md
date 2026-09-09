@@ -498,3 +498,23 @@ cutoff, AFC/NFC, and Conference/Division controls.
 
 Next: implement contextual NFL News in this dashboard, then expand the NFL team
 Schedule tab into the detailed full-season presentation.
+
+## 19. Game-night frontend release — 2026-09-09
+
+The reviewed redesign branch was fast-forwarded into `main` and published through
+the repository's GitHub Pages deployment. Production now includes the dedicated
+NFL dashboard, conference/division standings, league and team leader surfaces,
+Broadsheet and Retro Card themes, and the retained player-stat frontend.
+
+The reported pregame “next game” duplication was confirmed to exist only in the
+earlier standalone design prototype. Fixtura's production Game Center does not
+render a next-game card. Testing the real Patriots–Seahawks event `401872656`
+did expose blank team labels in the Info tab standings because ESPN supplies
+`entry.team` as a string for that response. Commit `8f2389a` accepts both string
+and object team shapes, retains provider-derived fallbacks, and escapes the label.
+
+Production verification covered tonight's pregame time, broadcast, venue, odds,
+Box Score and Info states; a 390×844 mobile viewport; and completed event
+`401772723` for score tables, the drive view, and the in-app player popup.
+Frontend tests passed 5/5, retained stats tests passed 38/38 plus both schema
+checks, and the production Worker health endpoint reported an OK database.
