@@ -17,6 +17,7 @@ import { loadF1 } from './views/f1.js';
 import { refreshGolf, renderGolf } from './views/golf.js';
 import { renderPickem } from './views/pickem.js';
 import { loadScores, renderScoresShell } from './views/scores.js';
+import { loadNFLDashboard, renderNFLShell } from './views/nfl.js';
 import { renderTeamsShell } from './views/teams.js';
 
 function renderNav(){
@@ -39,6 +40,7 @@ function markNav(){document.querySelectorAll('#viewNav button').forEach(x=>x.cla
 /* ========================= ROUTER ========================= */
 function render(){
   if(S.view==='scores'){renderScoresShell();loadScores();}
+  else if(S.view==='nfl'){renderNFLShell();loadNFLDashboard();}
   else if(S.view==='calendar')renderCalendar();
   else if(S.view==='teams')renderTeamsShell();
   else if(S.view==='golf')renderGolf();
@@ -142,6 +144,7 @@ setInterval(()=>{
   if(!S.autoRefresh||modalOpen())return;
   loadTicker();
   if(S.view==='scores'){loadScores();return;}
+  if(S.view==='nfl'){loadNFLDashboard();return;}
   if(S.view==='golf')refreshGolf();
 },60000);
 

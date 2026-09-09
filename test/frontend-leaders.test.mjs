@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 const requests = [];
 globalThis.fetch = async input => {
@@ -44,4 +45,57 @@ test('formatting and section markup preserve missing values, collapse cards, and
   assert.match(expanded, /A &lt;Player&gt;/);
   assert.match(expanded, /data-dash-player="10"/);
   assert.doesNotMatch(expanded, /espn\.com\/.*href/i);
+});
+
+test('NFL dashboard is a reconciled top-level view and Scores has no leader mount', async () => {
+  const [config, account, scores, app, nflView] = await Promise.all([
+    readFile(new URL('../src/config.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/account.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/views/scores.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/app.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/views/nfl.js', import.meta.url), 'utf8'),
+  ]);
+  assert.match(config, /teams:'TEAMS',nfl:'NFL',f1:'F1'/);
+  assert.match(config, /\['scores','teams','nfl','f1'/);
+  assert.match(account, /VIEWS_KNOWN_BEFORE=\['scores','teams','f1','golf','calendar'\]/);
+  assert.doesNotMatch(scores, /nflLeaders|fetchNFLLeaderGroup|leaderSectionHTML/);
+  assert.match(app, /renderNFLShell\(\);loadNFLDashboard\(\)/);
+  assert.match(nflView, /NFL Dashboard/);
+});
+
+const standingEntry = (id, seed) => ({
+  team: { id: String(id), name: `Team ${id}`, shortDisplayName: `Team ${id}`, abbreviation: `T${id}`,
+    logos: [{ href: `https://image.test/${id}.png` }] },
+  stats: [
+    { name: 'wins', value: 17 - seed, displayValue: String(17 - seed) },
+    { name: 'losses', value: seed, displayValue: String(seed) },
+    { name: 'ties', value: 0, displayValue: '0' },
+    { name: 'winPercent', value: (17 - seed) / 17, displayValue: '.500' },
+    { name: 'playoffSeed', value: seed, displayValue: String(seed) },
+    { name: 'pointDifferential', value: 100 - seed, displayValue: `+${100 - seed}` },
+    { name: 'vs. Conf.', displayValue: '8-4' },
+  ],
+});
+
+function standingsFixture(withSeeds = true) {
+  return { season: { year: 2025 }, children: [{ id: '8', name: 'American Football Conference', abbreviation: 'AFC',
+    children: Array.from({ length: 4 }, (_, division) => ({ id: String(division), name: `AFC Division ${division + 1}`,
+      abbreviation: `D${division + 1}`, standings: { entries: Array.from({ length: 4 }, (_, row) => {
+        const seed = division * 4 + row + 1;
+        return standingEntry(seed, withSeeds ? seed : 0);
+      }) } })) }] };
+}
+
+test('conference standings use only complete official seeds for playoff cutoff labels', () => {
+  const official = nfl.normalizeNFLStandings(standingsFixture(true));
+  assert.equal(official.conferences[0].officialSeeds, true);
+  const html = dashboard.standingsSectionHTML({ data: official, conference: 'AFC', view: 'conference' });
+  assert.match(html, /Wild-card qualifiers/);
+  assert.match(html, /Playoff cutoff/);
+
+  const early = nfl.normalizeNFLStandings(standingsFixture(false));
+  assert.equal(early.conferences[0].officialSeeds, false);
+  const earlyHtml = dashboard.standingsSectionHTML({ data: early, conference: 'AFC', view: 'conference' });
+  assert.match(earlyHtml, /has not published playoff seeds yet/);
+  assert.doesNotMatch(earlyHtml, /Playoff cutoff/);
 });

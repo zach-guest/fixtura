@@ -80,7 +80,7 @@ is the sole external asset is not an accurate inventory.
   Keep it a leaf; no imports from views or components.
 - `src/api.js`: calls to Fixtura's Worker, bearer token and JSON handling.
 - `src/account.js`: auth lifecycle, settings sync, favorites, tab reconciliation.
-- `src/views/`: Scores, Teams, F1, Golf, Calendar, Pick’em.
+- `src/views/`: Scores, Teams, NFL Dashboard, F1, Golf, Calendar, Pick’em.
 - `src/components/`: shared cards, game/player modals, drive view, ticker, settings,
   update checking. Preserve `openPlayer` as the in-app player detail experience.
 - `worker/`: separate Cloudflare ES-module Worker and D1 database. Wrangler tooling

@@ -467,3 +467,34 @@ Next redesign work: build conference-wide standings with a visible playoff/wild-
 card cutoff, then expand the team Schedule tab into the agreed full-season detail.
 NFL/team news placement, the pregame next-game duplication, and the remaining
 prototype copy cleanup are still open.
+
+## 18. Dedicated NFL dashboard and standings — 2026-09-09
+
+Zach reviewed the first integration and decided the league dashboard must not live
+inside Scores. That decision is now implemented locally: NFL is its own top-level
+tab, Scores is games-only again, and the dashboard has Overview, Standings, and
+News tabs. Overview owns the collapsible league leader cards. The NFL team Stats
+tab remains in place.
+
+New installations place NFL after Teams. Existing saved/customized layouts gain
+NFL through the established `reconcileViews()` and `sb-viewsseen` path, preserving
+their chosen order and hidden tabs. The historical `VIEWS_KNOWN_BEFORE` marker was
+left unchanged so the new view is recognized as new rather than silently hidden.
+
+Standings now provides AFC/NFC and Conference/Division controls using ESPN's live
+three-level standings. Conference tables show all 16 teams. When ESPN publishes a
+complete official 1–16 seed set, Fixtura draws division-winner, wild-card, and
+outside-the-field cutoff boundaries. It does not infer playoff seeds from record
+because that would omit NFL tiebreakers. Before current seed data exists, the view
+states that the table is record-sorted and withholds the cutoff. A current/previous
+season switch lets the completed 2025 table show the full official playoff picture
+while the pre-kickoff 2026 table remains honest.
+
+The News tab is reserved for the agreed contextual NFL news slice and currently
+says “Coming next.” No frontend deployment was performed. Focused tests pass 5/5,
+changed JavaScript passes syntax checks, and real-browser review covered the new
+top-level reconciliation, Retro Overview, live 2026 standings, 2025 official
+cutoff, AFC/NFC, and Conference/Division controls.
+
+Next: implement contextual NFL News in this dashboard, then expand the NFL team
+Schedule tab into the detailed full-season presentation.

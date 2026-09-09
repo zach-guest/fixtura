@@ -47,9 +47,9 @@ const DEFAULT_TEAMS=[
 
 // Tab row. VIEW_ORDER (persisted) holds the visible keys in display order; anything in
 // VIEW_LABELS but not in VIEW_ORDER is simply hidden.
-const VIEW_LABELS={scores:'SCORES',teams:'TEAMS',f1:'F1',golf:'GOLF',calendar:'CALENDAR',pickem:"PICK'EM"};
+const VIEW_LABELS={scores:'SCORES',teams:'TEAMS',nfl:'NFL',f1:'F1',golf:'GOLF',calendar:'CALENDAR',pickem:"PICK'EM"};
 
-const DEFAULT_VIEWS=['scores','teams','f1','golf','calendar','pickem'];
+const DEFAULT_VIEWS=['scores','teams','nfl','f1','golf','calendar','pickem'];
 
 const GOLF_TOURS=[['pga','PGA'],['lpga','LPGA'],['liv','LIV'],['eur','DP World'],
   ['champions-tour','Champions'],['ntw','Korn Ferry']];
@@ -58,6 +58,7 @@ const LIVE_SCAN=['nfl','ncaaf','nba','wnba','ncaam','mlb','nhl',
   ...['club','international'].flatMap(m=>SOCCER_GROUPS[m].flatMap(g=>g.comps.map(c=>'soc:'+c.k)))];
 
 const API='https://site.api.espn.com/apis/site/v2/sports';
+const NFL_STANDINGS='https://site.api.espn.com/apis/v2/sports/football/nfl/standings';
 
 const WEB='https://site.web.api.espn.com/apis/common/v3/sports';
 
@@ -84,4 +85,4 @@ const WX_CODES={0:'Clear sky',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',45
 
 const BAD_IMG=/logo|icon|map\b|flag|crest|badge|commons|wiki|symbol|coat|arms|portal|question|ambox|edit|stub|disambig|padlock|seal|emblem|template|pictogram|dice|soccer_?ball|sports?.?(and|balls)|location|osm|compass|star_|arrow/i;
 
-export { API, APIBASE, BAD_IMG, CORE, DEFAULT_TEAMS, DEFAULT_TICKER, DEFAULT_VIEWS, ERG, GEO, GOLF_TOURS, LEAGUES, LIVE_SCAN, PRIMARY, SOCCER_GROUPS, VIEW_LABELS, WEB, WEBSITE, WIKI, WXAPI, WX_CODES };
+export { API, APIBASE, BAD_IMG, CORE, DEFAULT_TEAMS, DEFAULT_TICKER, DEFAULT_VIEWS, ERG, GEO, GOLF_TOURS, LEAGUES, LIVE_SCAN, NFL_STANDINGS, PRIMARY, SOCCER_GROUPS, VIEW_LABELS, WEB, WEBSITE, WIKI, WXAPI, WX_CODES };

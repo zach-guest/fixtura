@@ -105,8 +105,15 @@
   .resbadge.L{background:rgba(185,28,28,.13);color:var(--loss)}
   .resbadge.T{background:rgba(120,120,120,.18);color:var(--dim)}
 
-  /* Reusable NFL leader dashboard. The same block serves the current NFL Scores
-     surface and the team Stats tab, and can move into a dedicated hub later. */
+  /* NFL dashboard and the leader block shared with the team Stats tab. */
+  .dash-nfl-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;padding:18px 19px;background:var(--panel);border:var(--edge) solid var(--line);border-radius:var(--radius) var(--radius) 0 0;border-bottom:0}
+  .dash-nfl-head h1{font-family:var(--display);font-size:32px;line-height:1;letter-spacing:-.015em}
+  .dash-nfl-head p{font-family:'Roboto Mono',monospace;font-size:10.5px;color:var(--dim);letter-spacing:.8px;text-transform:uppercase}
+  .dash-tabs{display:flex;gap:2px;margin-bottom:15px;padding:0 10px;background:var(--panel);border:var(--edge) solid var(--line);border-top:1px solid var(--line-soft);border-radius:0 0 var(--radius) var(--radius);overflow-x:auto}
+  .dash-tab{background:none;border:0;border-bottom:3px solid transparent;color:var(--dim);padding:10px 13px 9px;font-size:12.5px;font-weight:700;white-space:nowrap}
+  .dash-tab:hover{color:var(--text)}.dash-tab-active{color:var(--accent);border-bottom-color:var(--accent)}
+  .dash-placeholder{background:var(--panel);border:var(--edge) solid var(--line);border-radius:var(--radius);padding:34px 18px;text-align:center}
+  .dash-placeholder h2{font-family:var(--display);font-size:25px}.dash-placeholder p{margin-top:5px;color:var(--dim);font-family:'Roboto Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:1px}
   .dash-leaders{margin:0 0 18px;background:var(--panel);border:var(--edge) solid var(--line);border-radius:var(--radius);box-shadow:var(--feature-shadow);overflow:hidden}
   .dash-heading{position:relative;background:var(--panel-2)}
   .dash-toggle{width:100%;min-height:58px;display:grid;grid-template-columns:1fr auto 22px;align-items:center;gap:12px;padding:12px 15px;background:none;border:0;color:var(--text);text-align:left;font-family:var(--display);font-size:22px;font-weight:700}
@@ -141,10 +148,43 @@
   .dash-detail-rows{margin:12px 18px 0;border:1px solid var(--line);border-radius:calc(var(--radius) - 2px);overflow:hidden;max-height:58vh;overflow-y:auto}
   .dash-detail-rows .dash-player{grid-template-columns:28px 36px minmax(0,1fr) auto;padding:9px 11px}
   .dash-detail-rows .dash-headshot{width:36px;height:36px}.dash-detail-rows .dash-player-name{font-size:13px}
+  .dash-standings{background:var(--panel);border:var(--edge) solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:var(--feature-shadow)}
+  .dash-standing-title{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;padding:16px 17px 12px;background:var(--panel-2);border-bottom:1px solid var(--line)}
+  .dash-standing-title span{font-family:'Roboto Mono',monospace;font-size:9.5px;color:var(--accent);letter-spacing:1.2px;text-transform:uppercase}
+  .dash-standing-title h2{margin-top:3px;font-family:var(--display);font-size:25px;line-height:1.05}
+  .dash-standing-title>b{font-family:'Roboto Mono',monospace;font-size:12px;color:var(--dim)}
+  .dash-standing-controls{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:11px 14px;border-bottom:1px solid var(--line-soft)}
+  .dash-standing-controls>div{display:flex;gap:6px}
+  .dash-standing-scroll{overflow-x:auto}
+  .dash-standing-table{width:100%;border-collapse:collapse;font-family:'Roboto Mono',monospace;font-size:11px;white-space:nowrap}
+  .dash-standing-table th{padding:8px 9px;background:var(--panel-2);color:var(--dim-2);font-size:9px;font-weight:600;letter-spacing:.5px;text-align:right}
+  .dash-standing-table td{padding:7px 9px;border-top:1px solid var(--line-soft);text-align:right}
+  .dash-standing-table th:first-child,.dash-standing-table td:first-child{text-align:left}
+  .dash-standing-team{display:flex;align-items:center;gap:7px;min-width:190px}
+  .dash-standing-team img{width:23px;height:23px;object-fit:contain;flex:none}
+  .dash-standing-team>span{display:flex;flex-direction:column;min-width:0}
+  .dash-standing-team strong{font-family:Inter,-apple-system,sans-serif;font-size:12px;overflow:hidden;text-overflow:ellipsis}
+  .dash-standing-team small{margin-top:2px;color:var(--dim-2);font-size:8.5px;font-weight:400}
+  .dash-standing-seed{width:19px;color:var(--accent);text-align:center;font-size:11px}
+  .dash-cut-label td{padding:5px 10px!important;background:var(--accent-2);color:var(--on-accent);font-family:'Barlow Condensed',sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;text-align:left!important;text-transform:uppercase}
+  .dash-cutoff td{background:var(--loss);color:var(--on-accent)}
+  .dash-standing-note{padding:11px 14px;color:var(--dim);font-family:'Roboto Mono',monospace;font-size:9.5px;line-height:1.55;border-top:1px solid var(--line-soft)}
+  .dash-standing-state{padding:34px 18px;background:var(--panel);border:var(--edge) solid var(--line);border-radius:var(--radius);color:var(--dim);font-family:'Roboto Mono',monospace;font-size:12px;text-align:center}
+  .dash-standing-state.dash-error{color:var(--live)}
+  .dash-division-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:13px}
+  .dash-division{min-width:0;border:1px solid var(--line);border-radius:calc(var(--radius) - 2px);overflow:hidden}
+  .dash-division h2{padding:8px 10px;background:var(--panel-2);font-family:var(--editorial);font-size:16px;border-bottom:1px solid var(--line)}
+  .dash-standing-division .dash-standing-team{min-width:145px}
 
   html[data-theme="broadsheet"] .dash-toggle,html[data-theme="broadsheet"] .dash-card-title,html[data-theme="broadsheet"] .dash-modal-head h2{letter-spacing:-.015em}
   html[data-theme="broadsheet"] .dash-leaders{border-top:3px solid var(--accent-2)}
   html[data-theme="retro"] .dash-leaders{border-color:var(--accent-dim);background:var(--panel);box-shadow:4px 4px 0 rgba(22,56,107,.18)}
+  html[data-theme="retro"] .dash-nfl-head{position:relative;overflow:hidden;align-items:center;min-height:96px;background:var(--nav-fill);border-color:var(--accent-dim);color:var(--on-accent)}
+  html[data-theme="retro"] .dash-nfl-head::after{content:'';position:absolute;right:82px;top:-38px;width:115px;height:150px;background:var(--accent);transform:rotate(22deg);opacity:.95}
+  html[data-theme="retro"] .dash-nfl-head h1{position:relative;z-index:1;font-family:'Barlow Condensed',sans-serif;font-size:39px;font-style:italic;letter-spacing:.01em;text-transform:uppercase;text-shadow:3px 3px 0 var(--accent)}
+  html[data-theme="retro"] .dash-nfl-head p{position:relative;z-index:1;max-width:86px;padding:6px 8px;background:var(--accent-2);color:var(--accent-dim);font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;text-align:center;transform:rotate(-2deg);clip-path:polygon(4% 0,100% 7%,95% 100%,0 90%)}
+  html[data-theme="retro"] .dash-tabs{border-color:var(--accent-dim)}
+  html[data-theme="retro"] .dash-tab{font-family:'Barlow Condensed',sans-serif;font-size:14px;letter-spacing:.7px;text-transform:uppercase}
   html[data-theme="retro"] .dash-heading{background:var(--nav-fill);border-bottom:var(--edge) solid var(--accent)}
   html[data-theme="retro"] .dash-heading::after{content:'LEADERS';position:absolute;right:58px;bottom:-9px;padding:2px 10px;background:var(--accent);color:var(--on-accent);font-family:'Barlow Condensed',sans-serif;font-size:11px;font-weight:700;letter-spacing:1.2px;transform:rotate(-2deg);clip-path:polygon(4% 0,100% 8%,96% 100%,0 88%)}
   html[data-theme="retro"] .dash-toggle{min-height:78px;padding-right:18px;color:var(--on-accent);font-family:'Barlow Condensed',sans-serif;font-size:28px;font-style:italic;letter-spacing:.02em;text-transform:uppercase;text-shadow:2px 2px 0 var(--accent)}
@@ -154,6 +194,12 @@
   html[data-theme="retro"] .dash-filter-active{background:var(--accent);border-color:var(--accent);color:var(--on-accent);transform:rotate(-1deg)}
   html[data-theme="retro"] .dash-card{border-width:2px;border-color:var(--accent-dim);box-shadow:2px 2px 0 rgba(22,56,107,.14)}
   html[data-theme="retro"] .dash-card-title{background:var(--accent-2);border-color:var(--accent-dim);font-family:'Barlow Condensed',sans-serif;font-size:17px;font-style:italic;text-transform:uppercase}
+  html[data-theme="retro"] .dash-standings{border-color:var(--accent-dim);box-shadow:4px 4px 0 rgba(22,56,107,.18)}
+  html[data-theme="retro"] .dash-standing-title{background:var(--nav-fill);border-color:var(--accent);color:var(--on-accent)}
+  html[data-theme="retro"] .dash-standing-title h2{font-family:'Barlow Condensed',sans-serif;font-size:29px;font-style:italic;text-transform:uppercase;text-shadow:2px 2px 0 var(--accent)}
+  html[data-theme="retro"] .dash-standing-title>b{padding:5px 9px;background:var(--accent-2);color:var(--accent-dim);transform:rotate(-2deg)}
+  html[data-theme="retro"] .dash-division{border-width:2px;border-color:var(--accent-dim)}
+  html[data-theme="retro"] .dash-division h2{background:var(--accent-2);font-family:'Barlow Condensed',sans-serif;font-style:italic;text-transform:uppercase}
 
   .prow{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:8px 12px;margin-bottom:5px;display:flex;align-items:center;gap:10px;cursor:pointer}
   .prow:hover{border-color:var(--accent-dim);background:var(--panel-2)}
@@ -490,6 +536,9 @@
     .calgame{justify-content:center}
     .dash-cards{grid-template-columns:1fr;padding:10px}
     .dash-toggle{font-size:20px}.dash-detail-rows{margin:10px;max-height:64vh}
+    .dash-division-grid{grid-template-columns:1fr;padding:10px}
+    .dash-standing-table{font-size:10.5px}.dash-standing-table th,.dash-standing-table td{padding:7px}
+    .dash-standing-team{min-width:165px}.dash-standing-team strong{font-size:11.5px}
     html[data-theme="retro"] .dash-toggle{font-size:24px}
   }
 

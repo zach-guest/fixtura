@@ -90,3 +90,42 @@ export async function openLeaderDetail({ scope = 'league', label = 'NFL leaders'
   };
   await render(onePerTeam);
 }
+
+function standingTeamHTML(entry, showSeed) {
+  const logo = entry.team.logo ? `<img src="${dashText(entry.team.logo)}" alt="" data-dash-img="team">` : '';
+  return `<tr><td class="dash-standing-team">${showSeed ? `<b class="dash-standing-seed">${dashText(entry.playoffSeed)}</b>` : '<b class="dash-standing-seed">—</b>'}${logo}<span><strong>${dashText(entry.team.shortDisplayName)}</strong><small>${dashText(entry.division)}</small></span></td><td>${dashText(entry.wins || '0')}</td><td>${dashText(entry.losses || '0')}</td><td>${dashText(entry.ties || '0')}</td><td>${dashText(entry.pct || '—')}</td><td>${dashText(entry.conferenceRecord || '—')}</td><td>${dashText(entry.differential || '—')}</td></tr>`;
+}
+
+function conferenceStandingsHTML(conference) {
+  const official = conference.officialSeeds;
+  const rows = conference.entries.map((entry, index) => {
+    const label = official && index === 4 ? '<tr class="dash-cut-label"><td colspan="7">Wild-card qualifiers</td></tr>' :
+      official && index === 7 ? '<tr class="dash-cut-label dash-cutoff"><td colspan="7">Playoff cutoff · outside the field below</td></tr>' : '';
+    return label + standingTeamHTML(entry, official);
+  }).join('');
+  const note = official ? 'Seeds 1–4 are division leaders and 5–7 are wild cards using ESPN’s published playoff order' : 'ESPN has not published playoff seeds yet. Teams are sorted by record; the official playoff cutoff will appear when seed data is available';
+  return `<div class="dash-standing-scroll"><table class="dash-standing-table"><thead><tr><th>Seed / Team</th><th>W</th><th>L</th><th>T</th><th>PCT</th><th>CONF</th><th>DIFF</th></tr></thead><tbody>${rows}</tbody></table></div><p class="dash-standing-note">${dashText(note)}</p>`;
+}
+
+function divisionStandingsHTML(conference) {
+  return `<div class="dash-division-grid">${conference.divisions.map(division => `<section class="dash-division"><h2>${dashText(division.name)}</h2><div class="dash-standing-scroll"><table class="dash-standing-table dash-standing-division"><thead><tr><th>Team</th><th>W</th><th>L</th><th>T</th><th>PCT</th></tr></thead><tbody>${division.entries.map(entry => `<tr><td class="dash-standing-team">${entry.team.logo ? `<img src="${dashText(entry.team.logo)}" alt="" data-dash-img="team">` : ''}<span><strong>${dashText(entry.team.shortDisplayName)}</strong></span></td><td>${dashText(entry.wins || '0')}</td><td>${dashText(entry.losses || '0')}</td><td>${dashText(entry.ties || '0')}</td><td>${dashText(entry.pct || '—')}</td></tr>`).join('')}</tbody></table></div></section>`).join('')}</div>`;
+}
+
+export function standingsSectionHTML({ data, conference = 'AFC', view = 'conference', seasons = [], selectedSeason, loading = false, error = null } = {}) {
+  if (loading) return '<div class="dash-standing-state">Loading standings</div>';
+  if (error) return `<div class="dash-standing-state dash-error">${dashText(error.message || error)}</div>`;
+  const selected = data?.conferences?.find(item => item.abbreviation === conference) || data?.conferences?.[0];
+  if (!selected) return '<div class="dash-standing-state">Standings are not published yet</div>';
+  const conferenceButtons = data.conferences.map(item => `<button type="button" class="dash-filter${item.abbreviation === selected.abbreviation ? ' dash-filter-active' : ''}" data-dash-conference="${dashText(item.abbreviation)}" aria-pressed="${item.abbreviation === selected.abbreviation}">${dashText(item.abbreviation)}</button>`).join('');
+  const viewButtons = ['conference', 'division'].map(id => `<button type="button" class="dash-filter${view === id ? ' dash-filter-active' : ''}" data-dash-standings-view="${id}" aria-pressed="${view === id}">${id === 'conference' ? 'Conference' : 'Division'}</button>`).join('');
+  const seasonButtons = seasons.map((year, index) => `<button type="button" class="dash-filter${year === selectedSeason ? ' dash-filter-active' : ''}" data-dash-standing-season="${dashText(year)}" aria-pressed="${year === selectedSeason}">${dashText(year)}${index === 0 ? ' current' : ' final'}</button>`).join('');
+  return `<section class="dash-standings"><div class="dash-standing-title"><div><span>Playoff picture</span><h2>${dashText(selected.name)}</h2></div><b>${dashText(data.season)}</b></div><div class="dash-standing-controls">${seasonButtons ? `<div role="group" aria-label="Season">${seasonButtons}</div>` : ''}<div role="group" aria-label="Conference">${conferenceButtons}</div><div role="group" aria-label="Standings view">${viewButtons}</div></div>${view === 'division' ? divisionStandingsHTML(selected) : conferenceStandingsHTML(selected)}</section>`;
+}
+
+export function wireStandingsSection(root, { onConference, onView, onSeason } = {}) {
+  if (!root) return;
+  root.querySelectorAll('[data-dash-conference]').forEach(button => button.addEventListener('click', event => onConference?.(event.currentTarget.dataset.dashConference)));
+  root.querySelectorAll('[data-dash-standings-view]').forEach(button => button.addEventListener('click', event => onView?.(event.currentTarget.dataset.dashStandingsView)));
+  root.querySelectorAll('[data-dash-standing-season]').forEach(button => button.addEventListener('click', event => onSeason?.(Number(event.currentTarget.dataset.dashStandingSeason))));
+  root.querySelectorAll('[data-dash-img]').forEach(image => image.addEventListener('error', () => { image.hidden = true; }));
+}

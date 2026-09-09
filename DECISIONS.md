@@ -425,3 +425,20 @@ Broadsheet and Retro Card join the existing five themes. Retro may use the appro
 starburst, ribbon, texture, and bolder card geometry, but no motto is committed yet.
 New display headings omit terminal periods. The current integration does not add
 news, redesign standings or schedules, or establish a separate NFL navigation tab.
+
+
+## NFL is a top-level dashboard — 2026-09-09
+
+Zach explicitly decided the league leader dashboard does not belong in Scores.
+The NFL view is now a top-level, user-configurable tab with Overview, Standings,
+and News sections. Scores returns to games only. This supersedes the temporary
+placement described in “First NFL leader surfaces” above and settles the earlier
+open question about whether NFL deserves a top-level tab. It does not settle a
+separate Home dashboard or the eventual mobile bottom-bar composition.
+
+NFL standings show both full conference order and division groupings. A playoff
+cutoff is drawn only from a complete set of ESPN-published seeds; Fixtura does not
+simulate official seeds from record because it does not yet implement every NFL
+tiebreaker. The active season is the default, and the completed prior season is
+available so the official division-winner and wild-card boundaries remain useful
+before current-year seeds are published.

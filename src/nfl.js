@@ -1,11 +1,13 @@
 import { api } from './api.js';
-import { API } from './config.js';
+import { API, NFL_STANDINGS } from './config.js';
+import { get } from './util.js';
 
 const STATS_TTL = 5 * 60 * 1000;
 const TEAMS_TTL = 24 * 60 * 60 * 1000;
 const seasonCache = { value: null, expires: 0, promise: null };
 const teamsCache = { value: null, expires: 0, promise: null };
 const statsCache = new Map();
+const standingsCache = new Map();
 
 const leader = (id, group, label, category, stat, format = 'count') => Object.freeze({ id, group, label, category, stat, format });
 export const NFL_LEADER_CATEGORIES = Object.freeze([
@@ -138,3 +140,65 @@ export function formatNFLLeaderValue(value, definition = {}) {
 }
 
 export function nflLeaderDefinition(id) { return definitionById.get(id) || null; }
+
+function standingStat(entry, name) {
+  const stat = (entry?.stats || []).find(item => item?.name === name || item?.abbreviation === name);
+  return stat ? { value: Number(stat.value), display: stat.displayValue ?? '' } : { value: NaN, display: '' };
+}
+
+function normalizeStandingEntry(entry, division) {
+  const team = entry?.team || {};
+  const seed = standingStat(entry, 'playoffSeed');
+  const conference = (entry?.stats || []).find(item => item?.name === 'vs. Conf.' || item?.shortDisplayName === 'CONF');
+  return {
+    team: {
+      id: String(team.id || ''),
+      abbreviation: team.abbreviation || '',
+      displayName: team.displayName || team.shortDisplayName || team.name || 'Unknown team',
+      shortDisplayName: team.shortDisplayName || team.name || team.displayName || 'Unknown team',
+      logo: team.logos?.[0]?.href || (team.id ? teamLogo(String(team.id)) : ''),
+    },
+    division,
+    wins: standingStat(entry, 'wins').display,
+    losses: standingStat(entry, 'losses').display,
+    ties: standingStat(entry, 'ties').display,
+    pct: standingStat(entry, 'winPercent').display,
+    pctValue: standingStat(entry, 'winPercent').value,
+    conferenceRecord: conference?.displayValue || '',
+    differential: standingStat(entry, 'pointDifferential').display || standingStat(entry, 'differential').display,
+    differentialValue: standingStat(entry, 'pointDifferential').value,
+    playoffSeed: Number.isInteger(seed.value) && seed.value > 0 ? seed.value : null,
+    clincher: standingStat(entry, 'clincher').display,
+  };
+}
+
+function recordOrder(a, b) {
+  return (Number(b.wins) || 0) - (Number(a.wins) || 0) ||
+    (b.pctValue || 0) - (a.pctValue || 0) ||
+    (b.differentialValue || 0) - (a.differentialValue || 0) ||
+    a.team.displayName.localeCompare(b.team.displayName);
+}
+
+export function normalizeNFLStandings(data) {
+  const conferences = (data?.children || []).map(conference => {
+    const divisions = (conference?.children || []).map(division => ({
+      id: String(division?.id || ''), name: division?.name || '', abbreviation: division?.abbreviation || '',
+      entries: (division?.standings?.entries || []).map(entry => normalizeStandingEntry(entry, division?.name || '')),
+    }));
+    const entries = divisions.flatMap(division => division.entries);
+    const seeds = new Set(entries.map(entry => entry.playoffSeed).filter(Boolean));
+    const officialSeeds = entries.length === 16 && seeds.size === 16 && entries.every(entry => entry.playoffSeed >= 1 && entry.playoffSeed <= 16);
+    entries.sort(officialSeeds ? (a, b) => a.playoffSeed - b.playoffSeed : recordOrder);
+    divisions.forEach(division => division.entries.sort(recordOrder));
+    return { id: String(conference?.id || ''), name: conference?.name || '', abbreviation: conference?.abbreviation || '', officialSeeds, divisions, entries };
+  }).filter(conference => conference.abbreviation);
+  const season = data?.season?.year;
+  if (!validSeason(season) || !conferences.length) throw new Error('NFL standings response was incomplete');
+  return { season, conferences };
+}
+
+export function fetchNFLStandings({ season }) {
+  if (!validSeason(season)) return Promise.reject(new Error('A numeric NFL season from 2000 to 2100 is required'));
+  const path = `${NFL_STANDINGS}?${new URLSearchParams({ level: '3', season: String(season) })}`;
+  return cacheSuccess(standingsCache, path, async () => normalizeNFLStandings(await get(path)));
+}
