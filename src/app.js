@@ -31,7 +31,7 @@ function markNav(){document.querySelectorAll('#viewNav button').forEach(x=>x.cla
 
 /* ========================= THEME ========================= */
 (function(){
-  const saved=store('sb-theme')||'paper';
+  const saved=store('sb-theme')||'broadsheet';
   document.documentElement.setAttribute('data-theme',saved);
   const s=$('#theme');s.value=saved;
   s.onchange=()=>{document.documentElement.setAttribute('data-theme',s.value);store('sb-theme',s.value);pushSettings();};

@@ -4,10 +4,12 @@ import { get } from './util.js';
 
 const STATS_TTL = 5 * 60 * 1000;
 const TEAMS_TTL = 24 * 60 * 60 * 1000;
+const NEWS_TTL = 5 * 60 * 1000;
 const seasonCache = { value: null, expires: 0, promise: null };
 const teamsCache = { value: null, expires: 0, promise: null };
 const statsCache = new Map();
 const standingsCache = new Map();
+const newsCache = new Map();
 
 const leader = (id, group, label, category, stat, format = 'count') => Object.freeze({ id, group, label, category, stat, format });
 export const NFL_LEADER_CATEGORIES = Object.freeze([
@@ -201,4 +203,42 @@ export function fetchNFLStandings({ season }) {
   if (!validSeason(season)) return Promise.reject(new Error('A numeric NFL season from 2000 to 2100 is required'));
   const path = `${NFL_STANDINGS}?${new URLSearchParams({ level: '3', season: String(season) })}`;
   return cacheSuccess(standingsCache, path, async () => normalizeNFLStandings(await get(path)));
+}
+
+function newsArticleTeams(article) {
+  const seen = new Set();
+  const teams = [];
+  for (const category of article?.categories || []) {
+    if (category?.type !== 'team' || category.teamId == null) continue;
+    const id = String(category.teamId);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    teams.push({ id, abbreviation: category.team?.abbreviation || '', name: category.description || category.team?.description || '', logo: teamLogo(id) });
+  }
+  return teams;
+}
+
+function normalizeNewsArticle(article) {
+  const image = (article?.images || []).find(img => img?.url) || null;
+  return {
+    id: String(article?.id ?? ''),
+    headline: article?.headline || '',
+    description: article?.description && article.description !== article.headline ? article.description : '',
+    published: article?.published || article?.lastModified || '',
+    image: image?.url || '',
+    link: article?.links?.web?.href || article?.links?.mobile?.href || '',
+    teams: newsArticleTeams(article),
+  };
+}
+
+export function fetchNFLNews({ limit = 20, teamId = null } = {}) {
+  if (teamId != null && !validId(String(teamId))) return Promise.reject(new Error('teamId must be a numeric ESPN team ID'));
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (teamId != null) params.set('team', String(teamId));
+  const path = `/football/nfl/news?${params}`;
+  return cacheSuccess(newsCache, path, async () => {
+    const response = await get(`${API}${path}`);
+    const articles = Array.isArray(response?.articles) ? response.articles : [];
+    return articles.map(normalizeNewsArticle).filter(item => item.id && item.headline && item.link);
+  }, NEWS_TTL);
 }

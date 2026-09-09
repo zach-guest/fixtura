@@ -442,3 +442,60 @@ simulate official seeds from record because it does not yet implement every NFL
 tiebreaker. The active season is the default, and the completed prior season is
 available so the official division-winner and wild-card boundaries remain useful
 before current-year seeds are published.
+
+## Broadsheet is the default theme; its type system now spans the whole app — 2026-09-09
+
+Zach decided Broadsheet — not Paper — is the default theme for new/cleared
+installs, and that the editorial serif treatment built for the NFL dashboard
+should read consistently everywhere, not just on that one screen. Implemented
+by Claude Code:
+
+- `index.html`'s pre-JS `data-theme` and the `sb-theme` fallback in `src/app.js`
+  changed from `paper` to `broadsheet`. This only affects installs with no
+  stored `sb-theme` — anyone who already has a saved theme preference (including
+  an explicit `paper`) keeps it; nothing overwrites an existing choice.
+- Five headline elements that were hardcoded to `'Barlow Condensed',sans-serif`
+  now read `var(--display)` instead: `header h1` (app title), `.daylabel`
+  (Scores day/week header), `.teamhero h2` (team page name), `.mteam .n`
+  (game-modal matchup team names), `.phero h2` (player-modal name). This is
+  wiring, not new design — `--editorial`/`--display` already existed as theme
+  tokens for exactly this, and the dashboard components already used them;
+  these just hadn't been hooked up. Every non-Broadsheet theme's base rule
+  still resolves `--display` to Barlow Condensed, so Paper/Midnight/Ice/
+  Terminal/Crimson/Retro Card are visually unchanged — only Broadsheet's
+  Newsreader serif now flows through the whole app instead of stopping at the
+  NFL dashboard. Numbers/data stay in Roboto Mono throughout; none of these
+  are tabular values.
+- **`nav.views button` (the top tab row — SCORES/TEAMS/NFL/…) deliberately did
+  not get this treatment**, after Zach reviewed it live: the serif read wrong
+  on tab labels specifically, and he wants those to match the plain sans-serif
+  already used by the NFL dashboard's own Overview/Standings/News sub-tabs
+  (`.dash-tab`, unstyled, inherits body `Inter`). Changed to explicit
+  `Inter,-apple-system,sans-serif` rather than left on the old Barlow Condensed,
+  so it now matches `.dash-tab` exactly rather than matching it by coincidence.
+  The rule this establishes: the serif is for **headline/title text**
+  (app name, page titles, names), not for **navigation/tab labels** — apply
+  that distinction to any future element, don't default to serif everywhere.
+- Retro Card's own look (starbursts, ribbons, texture, how loud it gets, its
+  motto) was deliberately **not touched** — Zach wants that theme's design work
+  done on the Codex/ChatGPT side, since it's still open per item 4 in "Open
+  decisions" above and is closer to illustration than typography wiring.
+
+Not done in this pass: a design review of whether any *other* elements (e.g.
+settings-panel labels, ticker) should also move to `var(--display)` — the six
+above were the clear, unambiguous headline candidates. Revisit if more of the
+app still reads as mismatched once this is seen live.
+
+**Follow-up fix, same day:** the `header h1` rule above had no visible effect —
+Zach checked after a hard refresh and the FIXTURA logo was still sans-serif.
+Not a caching issue (the first guess): `index.html`'s `<h1 class="cond">` was
+also matched by `.cond{font-family:'Barlow Condensed',...}`, a single-class
+selector, and CSS specificity ranks a lone class *above* the two-element
+selector `header h1` regardless of source order — so `.cond` silently won.
+Fixed by dropping `class="cond"` from that one `<h1>`, since `header h1`
+already carries the theme-aware token and the class was now redundant-and-wrong
+rather than redundant-and-harmless. The other five elements changed above were
+checked against the same failure mode and don't have it — `.teamhero h2` and
+`.phero h2` also render through elements that carry `class="cond"` in
+`teams.js`/`f1.js`/`modal.js`, but a class-plus-element selector (`.teamhero
+h2`) outranks a lone class, so those two were never actually broken by this.

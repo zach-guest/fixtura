@@ -1,10 +1,10 @@
 import { S } from '../state.js';
 import { favIndex, saveFavs, toggleFav } from '../account.js';
 import { wireCards } from '../components/gamecard.js';
-import { leaderSectionHTML, openLeaderDetail, wireLeaderSection } from '../components/dashboard.js';
+import { leaderSectionHTML, newsSectionHTML, openLeaderDetail, wireLeaderSection, wireNewsSection } from '../components/dashboard.js';
 import { openPlayer, rosterHTML, wirePlayers } from '../components/modal.js';
 import { API, CORE, LEAGUES, WIKI } from '../config.js';
-import { fetchNFLLeaderGroup, resolveNFLSeason } from '../nfl.js';
+import { fetchNFLLeaderGroup, fetchNFLNews, resolveNFLSeason } from '../nfl.js';
 import { $, esc, gameTime, get, initials, logoOf, oddsLine, store, teamName, ymd } from '../util.js';
 
 /* ========================= TEAMS ========================= */
@@ -196,7 +196,7 @@ function runSearch(quiet){
 
 async function loadTeam(){
   const body=$('#teamBody'),t=S.activeTeam;
-  if(t.league!=='nfl'&&S.teamTab==='stats')S.teamTab='schedule';
+  if(t.league!=='nfl'&&(S.teamTab==='stats'||S.teamTab==='news'))S.teamTab='schedule';
   body.innerHTML='<div class="msg">Loading '+esc(t.name)+'\u2026</div>';
   try{
     const info=await get(API+'/'+LEAGUES[t.league].path+'/teams/'+t.id).catch(()=>null);
@@ -211,13 +211,16 @@ async function loadTeam(){
       '<div class="subbar"><button class="chip '+(S.teamTab==='schedule'?'on':'')+'" data-tt="schedule">Schedule</button>'+
       '<button class="chip '+(S.teamTab==='roster'?'on':'')+'" data-tt="roster">Roster</button>'+
       (t.league==='nfl'?'<button class="chip '+(S.teamTab==='stats'?'on':'')+'" data-tt="stats">Stats</button>':'')+
-      '<button class="chip '+(S.teamTab==='inj'?'on':'')+'" data-tt="inj">Injuries</button></div>'+
+      '<button class="chip '+(S.teamTab==='inj'?'on':'')+'" data-tt="inj">Injuries</button>'+
+      (t.league==='nfl'?'<button class="chip '+(S.teamTab==='news'?'on':'')+'" data-tt="news">News</button>':'')+
+      '</div>'+
       '<div id="ttBody"><div class="msg">Loading\u2026</div></div>';
     $('#favBtn').onclick=()=>{toggleFav({name:(ti&&ti.displayName)||t.name,short:(ti&&ti.shortDisplayName)||t.short||t.name,
       league:t.league,id:t.id,logo:logo||''});renderTeamsShell();};
     document.querySelectorAll('[data-tt]').forEach(b=>b.onclick=()=>{S.teamTab=b.dataset.tt;loadTeam();});
-    if(S.teamTab==='schedule')loadTeamSchedule();else if(S.teamTab==='roster')loadTeamRoster();
-    else if(S.teamTab==='stats')loadTeamStats((ti&&ti.displayName)||t.name);else loadTeamInjuries();
+    if(S.teamTab==='schedule')(t.league==='nfl'?loadNFLTeamSchedule():loadTeamSchedule());else if(S.teamTab==='roster')loadTeamRoster();
+    else if(S.teamTab==='stats')loadTeamStats((ti&&ti.displayName)||t.name);
+    else if(S.teamTab==='news')loadTeamNews();else loadTeamInjuries();
   }catch(e){body.innerHTML='<div class="msg err">Couldn\'t load this team.</div>';}
 }
 
@@ -249,6 +252,19 @@ async function loadTeamStats(label){
     if(request!==teamLeaderRequest||S.activeTeam!==t||S.teamTab!=='stats')return;
     drawTeamLeaders(label,{categories:categories});
   }catch(e){if(request===teamLeaderRequest)drawTeamLeaders(label,{error:e});}
+}
+
+let teamNewsRequest=0;
+
+async function loadTeamNews(){
+  const root=$('#ttBody'),t=S.activeTeam,request=++teamNewsRequest;
+  root.innerHTML=newsSectionHTML({loading:true});
+  try{
+    const articles=await fetchNFLNews({limit:20,teamId:t.id});
+    if(request!==teamNewsRequest||S.activeTeam!==t||S.teamTab!=='news')return;
+    root.innerHTML=newsSectionHTML({articles,emptyText:'No recent news for this team.'});
+    wireNewsSection(root);
+  }catch(e){if(request===teamNewsRequest)root.innerHTML=newsSectionHTML({error:e});}
 }
 
 async function fetchTeamEvents(t){
@@ -297,6 +313,28 @@ async function fetchTeamEvents(t){
   }
   all.sort((a,b)=>new Date(a.date)-new Date(b.date));
   return {events:all,year:year||guess};
+}
+
+async function loadNFLTeamSchedule(){
+  const box=$('#ttBody'),t=S.activeTeam,base=API+'/'+LEAGUES.nfl.path+'/teams/'+t.id+'/schedule';
+  try{
+    const [reg,post]=await Promise.all([get(base),get(base+'?seasontype=3').catch(()=>null)]);
+    const year=(reg.season&&reg.season.year)||'';
+    const byeWeek=Number.isInteger(reg.byeWeek)?reg.byeWeek:null;
+    const regEvents=(reg.events||[]).filter(e=>e&&e.week&&Number.isInteger(e.week.number));
+    const lastWeek=regEvents.reduce((m,e)=>Math.max(m,e.week.number),byeWeek||0);
+    let rows='';
+    for(let w=1;w<=lastWeek;w++){
+      const ev=regEvents.find(e=>e.week.number===w);
+      if(ev)rows+='<div class="wk-row"><div class="wk-num">Wk '+w+'</div>'+teamRow(ev,t)+'</div>';
+      else if(w===byeWeek)rows+='<div class="wk-row"><div class="wk-num">Wk '+w+'</div><div class="wk-bye">Bye week</div></div>';
+    }
+    const postEvents=((post&&post.events)||[]).filter(e=>e&&e.week&&Number.isInteger(e.week.number)).sort((a,b)=>a.week.number-b.week.number);
+    postEvents.forEach(ev=>{rows+='<div class="wk-row"><div class="wk-num">'+esc((ev.week&&ev.week.text)||'Playoffs')+'</div>'+teamRow(ev,t)+'</div>';});
+    box.innerHTML=(year?'<div class="grouplabel">'+esc(year)+' season</div>':'')+
+      (rows?'<div class="wk-schedule">'+rows+'</div>':'<div class="msg">No schedule published yet.</div>');
+    wireCards();
+  }catch(e){box.innerHTML='<div class="msg err">Couldn\'t load the schedule.</div>';}
 }
 
 async function loadTeamSchedule(){

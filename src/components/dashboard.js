@@ -129,3 +129,37 @@ export function wireStandingsSection(root, { onConference, onView, onSeason } = 
   root.querySelectorAll('[data-dash-standing-season]').forEach(button => button.addEventListener('click', event => onSeason?.(Number(event.currentTarget.dataset.dashStandingSeason))));
   root.querySelectorAll('[data-dash-img]').forEach(image => image.addEventListener('error', () => { image.hidden = true; }));
 }
+
+function newsTimeAgo(iso) {
+  const then = iso ? new Date(iso).getTime() : NaN;
+  if (!Number.isFinite(then)) return '';
+  const minutes = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (minutes < 60) return minutes <= 1 ? 'Just now' : `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? '1d ago' : `${days}d ago`;
+}
+
+function newsCardHTML(article) {
+  const teamTags = article.teams.slice(0, 2).map(team => `<span class="dash-news-team">${team.logo ? `<img src="${dashText(team.logo)}" alt="" data-dash-img="team">` : ''}${dashText(team.abbreviation || team.name)}</span>`).join('');
+  return `<a class="dash-news-card" href="${dashText(article.link)}" target="_blank" rel="noopener noreferrer">` +
+    (article.image ? `<img class="dash-news-image" src="${dashText(article.image)}" alt="" loading="lazy" data-dash-img="news">` : '') +
+    `<div class="dash-news-body">` +
+    `<h3 class="dash-news-headline">${dashText(article.headline)}</h3>` +
+    (article.description ? `<p class="dash-news-desc">${dashText(article.description)}</p>` : '') +
+    `<div class="dash-news-meta">${teamTags}<span class="dash-news-time">${dashText(newsTimeAgo(article.published))}</span></div>` +
+    `</div></a>`;
+}
+
+export function newsSectionHTML({ articles = null, loading = false, error = null, emptyText = 'No news available right now.' } = {}) {
+  if (error && !articles) return `<div class="dash-standings"><div class="dash-standing-state dash-error">Couldn't load news (${dashText(error.message || error)}).</div></div>`;
+  if (loading && !articles) return '<div class="dash-standings"><div class="dash-standing-state">Loading news…</div></div>';
+  if (!articles || !articles.length) return `<div class="dash-standings"><div class="dash-standing-state">${dashText(emptyText)}</div></div>`;
+  return `<div class="dash-news-list">${articles.map(newsCardHTML).join('')}</div>`;
+}
+
+export function wireNewsSection(root) {
+  if (!root) return;
+  root.querySelectorAll('[data-dash-img]').forEach(image => image.addEventListener('error', () => image.remove()));
+}

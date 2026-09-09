@@ -1,11 +1,12 @@
 # Handoff — redesign + NFL dashboards
 
-**Current status — 2026-09-09:** `main` and `origin/main` are aligned. The
-frontend is live on GitHub Pages and the Worker stats storage, capture, and read
-routes are deployed and healthy. Sections 17–19 contain the latest implementation
-and release record. Next product work is contextual NFL and team news, followed
-by the detailed NFL team schedule. Older sections preserve the original Claude
-handoff and historical status.
+**Current status — 2026-09-09:** Zach reviewed the batch in §20–22 locally
+(Broadsheet default, the app-wide type-system change with two live-reviewed
+corrections, the NFL News tab, the detailed NFL team Schedule tab, and
+per-team news) and asked to deploy it. Pushed to `main`/`origin/main` and live
+on GitHub Pages. Sections 17–19 contain the prior implementation and release
+record. Older sections preserve the original Claude handoff and historical
+status.
 
 The original sections were written 2026-09-07 at the end of the planning/prototype
 session that opened this track. Their facts and decisions reflect that date; the
@@ -527,3 +528,179 @@ Box Score and Info states; a 390×844 mobile viewport; and completed event
 `401772723` for score tables, the drive view, and the in-app player popup.
 Frontend tests passed 5/5, retained stats tests passed 38/38 plus both schema
 checks, and the production Worker health endpoint reported an OK database.
+
+## 20. NFL News tab, and Broadsheet default/type-system change — 2026-09-09
+
+Implemented locally by Claude Code, on `main`, not yet deployed to GitHub Pages.
+Two changes, both scoped narrowly:
+
+**NFL dashboard News tab.** The tab that said "Coming next" now shows a live
+feed of the 20 most recent articles from ESPN's keyless
+`site.api.espn.com/.../nfl/news` endpoint, fetched directly (no Worker
+involvement — this is public data, same as everything else on the ESPN path).
+`fetchNFLNews()` in `src/nfl.js` normalizes each article (headline,
+description, image, published date, external link, and up to two tagged teams
+pulled from `categories[].type === 'team'`) and drops anything missing an id,
+headline, or link; `src/views/nfl.js` renders them as cards
+(`.dash-news-card`) that open the ESPN article in a new tab
+(`rel="noopener noreferrer"`, matching the existing Wikipedia-link convention
+in `modal.js`). Cards follow the same stale-while-revalidate pattern already
+used by Standings (`lastNews` holds the last successful fetch so the existing
+list stays up during the 60s background refresh instead of flashing back to a
+loading state) — the first cut of this didn't do that and would have re-shown
+"Loading NFL news…" over live content every 60 seconds; caught before commit,
+not after. New CSS is under `.dash-news-*` in `styles.css`, styled from
+existing theme tokens only (`--panel`, `--line`, `--editorial`, `--dim`, …) so
+it does not need a Retro Card-specific pass.
+
+This is scoped to the league-wide feed only. **"Team news" (per-team, shown on
+a team's own page) is still open** — `src/views/teams.js` has no news tab yet,
+and the 2026-09-08 planning note "News belongs within NFL and Teams" is only
+half addressed by this slice.
+
+**Broadsheet is now the default theme, and its type system now spans the
+whole app.** Zach asked for this directly: Broadsheet (not Paper) should be
+what a new visit sees, and the editorial-serif language already built for the
+NFL dashboard should read consistently on every tab, not stop at that one
+screen. He was explicit that Retro Card's own visual design (starbursts,
+ribbons, texture, how loud it gets, its motto — still open per item 4 in
+`DECISIONS.md`'s "Open decisions") stays on the Codex/ChatGPT side; nothing in
+this slice touches Retro's overrides.
+
+Implementation, recorded in full in `DECISIONS.md` under "Broadsheet is the
+default theme; its type system now spans the whole app": the `sb-theme`
+fallback (`src/app.js`) and the pre-JS `data-theme` (`index.html`) both changed
+from `paper` to `broadsheet` — this only affects installs with no stored
+preference, so anyone who already picked a theme keeps it. Six elements that
+were hardcoded to `'Barlow Condensed',sans-serif` now read the existing
+`var(--display)` token instead: the app header, the nav tab labels, the Scores
+day/week label, the team-page name, the game-modal matchup team names, and the
+player-modal name. Every theme besides Broadsheet still resolves `--display` to
+Barlow Condensed, so this is invisible on Paper/Midnight/Ice/Terminal/
+Crimson/Retro Card — only Broadsheet's Newsreader serif now flows through the
+whole app.
+
+**Validation:** `fetchNFLNews()` was run end-to-end against live production
+ESPN data via a throwaway Node script (not just a curl shape-check) and
+returned 5/5 well-formed articles with images, links, and team tags. Both
+changed JavaScript files pass `node --check`. No dangling references to the
+removed `renderComingSoon()` helper remain. **Not done: real-browser
+verification** — no browser-automation tool was available in this session, so
+the News tab's actual rendering, the theme default on a fresh load, and the
+font change across all six elements were only verified by static review and
+the Node-level data check, not by opening the page and looking at it or
+clicking through. A local server was left running at `localhost:8123` for
+Zach to check visually before this ships. Load `?v=2` or similar to bypass any
+cached module.
+
+Not deployed. Zach reviewed locally and confirmed the type-system change looks
+right after two follow-up corrections, both applied and re-verified live:
+`nav.views button` was pulled back off the serif to match `.dash-tab`'s plain
+sans-serif per his request, and the FIXTURA logo needed `class="cond"` removed
+from `index.html`'s `<h1>` — a CSS-specificity bug (a lone class outranks the
+two-element `header h1` selector regardless of source order), not the caching
+issue it first looked like. See `DECISIONS.md` for the full account. Still not
+deployed to GitHub Pages.
+
+Zach chose to hold everything above and batch it with more work rather than
+deploy immediately — see §21.
+
+## 21. Detailed NFL team schedule — 2026-09-09
+
+Implemented locally by Claude Code, on `main`, not deployed. The NFL team
+Schedule tab (`src/views/teams.js`) no longer reuses the generic
+Upcoming/Results flat list shared by every league — it now renders a real
+week-by-week season grid, NFL-only, via a new `loadNFLTeamSchedule()` that
+`loadTeam()` dispatches to instead of the shared `loadTeamSchedule()` when
+`t.league === 'nfl'`. Every other league (NBA, MLB, soccer, etc.) is untouched
+and still gets the original flat list — this follows the standing "NFL only,
+don't build a generic abstraction" rule.
+
+**Why a separate function instead of extending the shared one:** ESPN's team
+schedule response carries fields the generic path never used —
+`week.number`/`week.text` per event and a top-level `byeWeek` integer — and
+these only exist in a form worth building UI around for the NFL, where a
+season is 18 numbered weeks with exactly one bye. Verified live via a
+throwaway Node script against real production data before writing any
+rendering code, not assumed from documentation:
+- Houston Texans, 2026 (current, in-progress season): 17 games + `byeWeek: 8`
+  fill all 18 weeks with zero gaps.
+- Houston Texans, 2025 (season complete, made the playoffs): the base call
+  returns only the 17 regular-season games; `?seasontype=3` on the same
+  endpoint returns the postseason games separately (`week.text`: "Wild Card",
+  "Divisional Round", …) with **no event-ID overlap** with the regular-season
+  set, confirming they're safe to concatenate rather than needing dedup logic.
+- A team with no playoff appearance (Ravens, 2025) correctly returns zero
+  events from the `seasontype=3` call — no error, no fabricated bracket.
+
+The new function fetches both calls in parallel, builds one row per week 1
+through the last known week number (falling back to `byeWeek` if no game
+exists for that slot — the empty slot is rendered as a dashed "Bye week" card,
+not left blank or silently dropped), then appends any postseason rows in order
+using `week.text` as the label so round names never need hardcoding. Each
+game row reuses the existing `teamRow()` renderer unchanged (same W/L badge,
+score, venue, broadcast, odds line, click-through to the real game modal) —
+only the surrounding per-week layout is new. New CSS (`.wk-schedule`,
+`.wk-row`, `.wk-num`, `.wk-bye`) draws from existing tokens only
+(`--panel-2`, `--line`, `--dim`, `--dim-2`) and needs no Retro-specific pass,
+same reasoning as the News tab in §20.
+
+**Scope deliberately held back:** no season-toggle (current vs. previous) like
+Standings has — full detail for the current season was the actual ask, and a
+toggle can be added later if it's wanted. No pagination/"show all" control
+either: an NFL season is at most ~20 rows total (18 weeks + up to 4 playoff
+rounds), which is exactly why "detailed full-season" is affordable here in a
+way it deliberately isn't for a 162-game MLB schedule on the shared path.
+
+**Validation:** both live-data scenarios above run against real production
+ESPN endpoints (not fixtures), plus `node --check` on the edited file. **Not
+verified in an actual browser** — no browser-automation tool was available in
+this session, same limitation as §20. The local server at `localhost:8123` has
+this change; Zach has not yet looked at it.
+
+Not deployed. Next, per Zach's "hold and batch" choice: continue to per-team
+news (the "Teams" half of "News belongs within NFL and Teams," §20 only
+shipped the NFL-dashboard half), then deploy everything from this session
+together.
+
+## 22. Per-team news, and a shared news component — 2026-09-09
+
+Implemented locally by Claude Code, on `main`, not deployed. NFL team pages
+(`src/views/teams.js`) now have a News tab alongside Schedule/Roster/Stats/
+Injuries — NFL-only, same gating as the existing Stats tab, using ESPN's
+`?team=<id>` filter on the same news endpoint §20 already integrated. Verified
+live that the filter is real (different article IDs for different team IDs,
+not a silently-ignored no-op) rather than assumed from ESPN's docs.
+
+**Refactored rather than duplicated:** the card rendering §20 wrote inline in
+`views/nfl.js` moved into `components/dashboard.js` as `newsSectionHTML()` /
+`wireNewsSection()`, matching the existing pattern there
+(`leaderSectionHTML`/`standingsSectionHTML` are pure-render functions shared
+by both `views/nfl.js` and `views/teams.js` already) — the same shared-
+component reasoning §17 used for leader cards. `fetchNFLNews()` in `src/nfl.js`
+gained an optional `teamId`, and its cache went from a single slot to a `Map`
+keyed by the full request path, since league and per-team feeds now coexist
+and must not evict each other.
+
+Team news does not carry §20's stale-while-revalidate handling — checked
+`app.js`'s 60-second refresh timer first, and Teams isn't in it (only Scores,
+NFL, and Golf poll in the background), so there's no periodic re-render for a
+team's news to flicker during. A fresh loading state on tab-open is correct
+here, not a regression.
+
+**Validation:** `fetchNFLNews({ teamId })` run against live production data
+for both a league-wide and a team-scoped request (5/5 well-formed articles
+each), plus confirmed a malformed `teamId` is rejected before any request is
+made. `node --check` passed on all three touched files
+(`nfl.js`, `dashboard.js`, `teams.js`). Grepped for leftover references to the
+old inline `newsCardHTML`/`timeAgo` in `views/nfl.js` — none remain. **Not
+verified in a real browser** — same limitation as §20–21; no browser-
+automation tool is available in this session. The local server at
+`localhost:8123` has this change.
+
+This closes out the "News belongs within NFL and Teams" item from the
+2026-09-08 planning notes. Zach reviewed this batch locally and asked to
+deploy; §20–22 (Broadsheet default, app-wide type-system change with two
+live-reviewed corrections, NFL News tab, detailed NFL team Schedule, per-team
+News) shipped together in one push to `main`/GitHub Pages. See the status line
+at the top of this file for the production verification that followed.
