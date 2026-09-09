@@ -533,6 +533,29 @@ function renderPlays(data){
   return html||'<div class="msg">No play data for this game.</div>';
 }
 
+/* Summary standings are inconsistent: event 401872656 currently supplies
+   `entry.team` as "Buffalo", while other summaries inline a team object or only
+   leave a team reference. Keep this local to the standings presentation rather
+   than fetching each row just to turn a stable provider identifier into a label. */
+function standingsTeamLabel(entry){
+  const team=entry&&entry.team;
+  const text=[
+    typeof team==='string'?team:'',
+    team&&team.displayName,team&&team.shortDisplayName,team&&team.name,
+    entry&&entry.displayName,entry&&entry.shortDisplayName,entry&&entry.name,
+    entry&&entry.teamName,entry&&entry.teamSlug,entry&&entry.note,
+  ].find(value=>typeof value==='string'&&value.trim());
+  if(text)return text.trim();
+  const ref=(team&&typeof team==='object'&&(team.$ref||team.ref||team.href))||(entry&&(entry.teamRef||entry.teamHref||entry.$ref));
+  if(typeof ref==='string'){
+    const slug=ref.match(/\/name\/[^/?#]+\/([^/?#]+)(?:[/?#]|$)/i)||ref.match(/\/teams?\/([^/?#]+)(?:[/?#]|$)/i);
+    if(slug&&slug[1]&&!/^\d+$/.test(slug[1])){
+      try{return unslug(decodeURIComponent(slug[1]).replace(/[_-]+/g,'-'));}catch(e){return unslug(slug[1].replace(/[_-]+/g,'-'));}
+    }
+  }
+  return 'Team unavailable';
+}
+
 function renderInfo(data){
   let html='';
   if(data.leaders&&data.leaders.length){
@@ -555,7 +578,7 @@ function renderInfo(data){
       html+='<div class="grptitle">'+esc(g.header||'')+'</div><div class="tscroll"><table class="st plain"><thead><tr>'+
         '<th style="text-align:left">Team</th><th>W</th><th>L</th><th>PCT</th></tr></thead><tbody>'+
         en.map(e=>{const f=n=>{const s=(e.stats||[]).find(x=>x.name===n);return s?s.displayValue:'';};
-          return '<tr><td style="text-align:left">'+esc(teamName(e.team)||e.note||'')+'</td><td>'+esc(f('wins'))+'</td><td>'+
+          return '<tr><td style="text-align:left">'+esc(standingsTeamLabel(e))+'</td><td>'+esc(f('wins'))+'</td><td>'+
             esc(f('losses'))+'</td><td>'+esc(f('winPercent'))+'</td></tr>';}).join('')+'</tbody></table></div>';});
   }
   if(data.article&&data.article.headline)html+='<div class="sublabel">Recap</div><div style="font-size:13px;line-height:1.6;color:var(--dim)"><b>'+
