@@ -121,13 +121,11 @@ It resets only its own test tables. Never deploy its Worker/configuration. The
 normal production deployment entrypoint remains `src/index.js`. Existing Worker
 regression checks remain `npm run dev` and `./test.sh` against disposable LOCAL D1.
 
-Both migrations have been tested on fresh SQLite and over an existing schema
-with disposable account, pool, pick, and weekly snapshot records. It is safe to
-reapply. No remote migration command was run. Existing deployments need migrations
-`0001` and `0002`, in order, before this Worker version can be deployed; otherwise
-the new scheduled task and read routes would reference tables that do not exist.
-The verified production sequence, smoke checks, and rollback procedure are in
-`STATS-ROLLOUT.md`.
+Both migrations were tested on fresh SQLite and over an existing schema with
+disposable account, pool, pick, and weekly snapshot records. Migrations `0001` and
+`0002` were applied in order to production on 2026-09-09 before Worker version
+`0fed0268-a8b5-409c-9136-f297ffc2c697` was deployed. The production sequence,
+smoke checks, and rollback procedure are in `STATS-ROLLOUT.md`.
 
 ## Verified samples and scope
 

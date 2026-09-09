@@ -2,8 +2,23 @@
 
 This runbook prepares the first production release of retained NFL player-game
 facts, coverage reads, player game logs, and total/qualified-rate leaderboards.
-It does not authorize a production change. Run the write and deploy steps only
-after the exact source tree is reviewed and approved.
+The first release was authorized and completed on 2026-09-09. Reuse the procedure
+for later releases only after reviewing the new source tree and recording fresh
+recovery information.
+
+## First release result — 2026-09-09
+
+- Released commit: `7ae8141651a89fb3ada1e9d71649c4457e4a5233`.
+- Deployed Worker version: `0fed0268-a8b5-409c-9136-f297ffc2c697`.
+- Previous Worker version: `8a86338b-460a-45a1-a3e2-1665ffc2e900`.
+- Migrations `0001` and `0002` succeeded before the Worker deployment.
+- All five expected stats/trends tables were present afterward. Existing records
+  remained present: 2 users, 3 pools, and 22 picks.
+- Production health, trends, coverage, total leaders, and qualified-rate leaders
+  returned the expected statuses and shapes. Provider-only passer rating remained
+  blocked with 400; unsigned `/me` remained private with 401.
+- The new public stats responses retained the expected five-minute cache and
+  GitHub Pages CORS headers. The existing ESPN proxy still returned 200.
 
 ## Audited state — 2026-09-09
 

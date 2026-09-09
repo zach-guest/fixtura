@@ -391,3 +391,17 @@ attempt denominator. Adjusted QBR and provider passer rating stay unavailable.
 
 This behavior is implemented and verified locally. It does not authorize a remote
 migration, archived production backfill, Worker deployment, or frontend release.
+
+
+## Player-game stats production release — 2026-09-09
+
+Zach explicitly authorized applying both additive stats migrations and deploying
+the reviewed Worker commit. Migrations `0001` and `0002` were applied in order,
+then commit `7ae8141` was deployed as Worker version
+`0fed0268-a8b5-409c-9136-f297ffc2c697`. Production smoke checks passed while the
+existing trends route, account privacy, Pick'em records, CORS, and caching behavior
+remained intact.
+
+The release authorizes the bounded scheduled capture and public read APIs already
+described. It does not authorize an archived production backfill, schema expansion,
+provider change, QBR derivation, or frontend release.

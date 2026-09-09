@@ -409,3 +409,26 @@ migrations `0001` and `0002` before deploying this exact reviewed Worker tree.
 After release validation, the next product slice is frontend wiring for the
 collapsible league/team cards, top-32 detail view, one-player-per-team option, and
 existing in-app player popup.
+
+## 16. Player-game stats production release — 2026-09-09
+
+Zach authorized the reviewed release. Production D1 Time Travel recovery was
+confirmed and a fresh bookmark recorded before writes. Additive migrations `0001`
+and `0002` both succeeded, creating all four player-game tables without removing
+the existing trends table. A preservation check still found 2 users, 3 pools, and
+22 picks; the new stats tables were empty before their first capture.
+
+Commit `7ae8141` was deployed as Worker version
+`0fed0268-a8b5-409c-9136-f297ffc2c697`. Production smoke checks passed for health,
+the existing trends route, stats coverage, total leaders, qualified-rate leaders,
+provider-only rejection, private-route authentication, CORS/cache headers, and the
+existing ESPN proxy. The empty 2026 stats responses are expected before completed
+games are captured.
+
+The prior Worker version is `8a86338b-460a-45a1-a3e2-1665ffc2e900` if code rollback
+is needed. The additive stats tables should remain in place during a Worker
+rollback. `worker/STATS-ROLLOUT.md` contains the full recovery procedure.
+
+Next product work: connect the production reads to the collapsible NFL/team stat
+leader sections, top-32 detail view, optional one-player-per-team filter, and the
+existing in-app player popup.

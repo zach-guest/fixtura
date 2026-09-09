@@ -156,8 +156,8 @@ behavior when changing the relevant path; historical measurements are not guaran
   totals, which must be distinguished from those snapshots.
 - Player-by-game storage has a local foundation plus bounded scheduled capture,
   coverage reads, player game-log reads, and a passing full-week archived audit;
-  total-stat and qualified recomputed-rate rankings are also integrated locally.
-  None is deployed yet; provider-only ratings remain unavailable. See the latest
+  total-stat and qualified recomputed-rate rankings are integrated and were first
+  deployed on 2026-09-09. Provider-only ratings remain unavailable. See the latest
   handoff for status. Preserve provenance, team-at-game identity,
   corrections, coverage, and stable IDs. Aggregate traded-player stints correctly;
   team ranks use that team's contribution. Define qualification for rate stats and
