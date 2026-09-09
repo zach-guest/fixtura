@@ -1,9 +1,9 @@
 # Fixtura — decisions and roadmap
 
-Split out of `CLAUDE.md` on 2026-08-21. That file is loaded into every session and
-should hold what governs how code gets written; this one holds what was decided and
-what is planned, which is read occasionally rather than every turn. Keep it that way
-— if something here starts constraining day-to-day edits, it belongs back there.
+Originally split out of `CLAUDE.md` on 2026-08-21. For Codex, operating
+instructions now live in `AGENTS.md`; this file remains the decision history and
+roadmap. Read later dated updates before relying on an older status statement.
+Keep persistent operating rules in `AGENTS.md`, not in the history below.
 
 ## Open decisions
 
@@ -258,3 +258,136 @@ which needs Python/ML tooling Workers can't run — and that would be a periodic
 offline job shipping its output into the Worker, not a live server. Don't
 over-engineer infrastructure ahead of this.
 
+
+
+## Codex transition and stats direction — 2026-09-08
+
+Zach is moving active work from Claude Code to Codex, with GPT-5.6 Sol Medium as
+the default lead model. `AGENTS.md` is the Codex operating guide, including the
+requested Sol/Terra/Luna usage and delegation policy. `CLAUDE.md` is retained as
+deleted. The older redesign status above describes the original Claude prototype;
+it is superseded by the review progress documented in the handoff's dated update.
+
+**Accepted direction:** expand beyond weekly top-10 snapshots into player-by-game
+records and calculate rankings/season totals within Fixtura. Zach explicitly
+accepted the stats plan on 2026-09-08. This is approval of the direction, not a
+claim that ingestion, migrations, backfills, or production APIs are implemented.
+
+Preserve the existing snapshot capture while extending Worker/D1 storage. Track
+source, capture/revision timestamps, season/type, event, player, and team-at-game.
+Use stable keys and correction-aware writes. League totals combine team stints;
+team rankings use only the player's contribution to that team. Rate stats need
+eligibility thresholds and underlying numerators/denominators. Missing coverage
+must not appear as zero or a complete ranking. Stored data does not supply
+unobserved tracking metrics; additional providers remain a separate evaluation.
+
+**Reviewed UI direction:** collapsible league/team leaders; three-player card
+previews opening larger lists of up to 32; an optional one-player-per-team league
+view; player selection stays in Fixtura using the existing full player popup when
+integrated. News belongs within NFL and Teams. League standings include conference
+playoff order/cutoff as well as division grouping. Team schedules need the full
+season detail. Retain the existing themes plus the two reviewed additions; Retro
+can use more ribbons/starbursts. Header wording remains undecided.
+
+The broader field inventory and staged storage proposal are saved alongside the
+Codex preview in `STATS-PLAN.md` (location in the handoff). Next: verify provider
+field coverage, then implement and validate a bounded archived-game ingestion
+sample before broader capture. The current task changes documentation only.
+
+
+## Player-by-game foundation — 2026-09-08
+
+Implemented the first bounded archived-data milestone in Worker modules: a 57-field
+NFL game-stat catalog, strict final-summary normalization, an additive D1 schema,
+and atomic correction-aware event imports. Targets, TFL, QB hits, passes defended,
+fumbles and special-teams fields are present in the observed box scores.
+
+Keep game facts separate from weekly leaderboard snapshots and all account/Pick’em
+records. Source category namespaces distinguish thrown and defensive interceptions;
+raw values and aggregation rules are retained. Missing data stays missing. Coverage
+refers to the supplied game box-score structure, not all players or season coverage.
+
+Validated two archived games, parser edge cases, preservation of existing records,
+idempotent imports, corrections, concurrent freshness, and D1 rollback. The existing
+Worker suite passed 165/165 locally. No remote migration, scheduled capture, public
+write endpoint, read API, or frontend connection was enabled. `worker/GAME-STATS.md`
+contains the implementation contract, validation commands, and next integration slice.
+
+
+## Scheduled player-game capture and safe reads — 2026-09-08
+
+The next local slice is implemented. The existing scheduled handler now runs a
+separate bounded NFL game capture task alongside health and weekly leaderboard
+snapshots. It scans current/previous regular- or postseason weeks, imports at most
+eight completed games per run, tracks discovery/retries, and revisits captures for
+corrections. A second additive migration stores operational capture state.
+
+Public D1 endpoints now expose discovered-final coverage and retained player game
+logs. Coverage wording is deliberately narrow; league/team rankings remain deferred
+until an audited backfill proves the requested period is complete. No public write
+endpoint or frontend connection was added.
+
+This remains local only. Both D1 migrations must be applied in order before a
+Worker deployment, and the documented trends-route branch hazard must be checked.
+The next accepted implementation step is a disposable archived-week backfill and
+reconciliation audit, then aggregation/ranking APIs if coverage passes.
+
+
+## Archived-week audit clears total-stat aggregation — 2026-09-08
+
+The 2025 regular-season Week 1 local audit imported all 16 scoreboard finals into
+the disposable stats database with no failures, partial captures, or event-ID
+differences. It retained 1,006 player-game rows and 7,979 numeric cells across all
+57 normalized fields. All 247 available comparisons against semantically matching
+team totals agreed exactly.
+
+Nine fumbles-lost comparisons were unavailable because the team box score reported
+zero while ESPN omitted individual fumble rows. This confirms the existing rule:
+do not invent per-player zero cells. Interception-return, fumble, and punt-return
+rows are event-driven and legitimately sparse.
+
+Decision: proceed with league/team aggregation for additive total statistics, but
+include audited coverage in responses. Rate statistics remain blocked on explicit
+qualification and numerator/denominator formulas. This audit was local only and
+does not authorize or imply a remote migration, backfill, or deployment.
+
+
+## Total-stat rankings may proceed; rate rankings remain gated — 2026-09-09
+
+The local stats API now ranks fields defined as additive totals or season maxima.
+League rankings combine a player's team stints; team rankings use only that team's
+contribution. Competition ties retain shared ranks. The optional one-player-per-team
+view chooses each team's best contribution before ranking the representatives.
+
+Every response carries discovered-final coverage and explicitly avoids claiming
+that discovered games equal a complete schedule. Recomputed rates and provider-only
+ratings are rejected until qualification and numerator/denominator rules are
+defined. Real Week 1 data and local D1 route tests passed. No remote migration or
+deployment was performed.
+
+
+## Qualified recomputed rate rankings — 2026-09-09
+
+Rate rankings must be calculated from summed player-game numerators and
+denominators, never from an average of provider game-level rates. The first
+supported set is passing yards per attempt, rushing yards per carry, receiving
+yards per reception, kickoff-return average, punt-return average, gross punting
+average, and field-goal percentage.
+
+Use the NFL's 2025 Guide for Statisticians full-season minimums for pass attempts,
+carries, receptions, punts, and returns. For an in-season Fixtura view, prorate the
+published minimum from its 16-game pace based on the represented team's captured
+game count and cap it at the published full-season minimum. Expose that derivation
+and all qualification inputs in the response. This is a Fixtura live-view rule
+derived from the published season standard, not a claim that the NFL guide defines
+weekly qualification.
+
+For a combined league row after a trade, use the player's latest represented team
+to determine the live threshold. Team and one-player-per-team rows use that team's
+game count. Exclude unqualified candidates before selecting each team's
+representative. The NFL guide does not publish a field-goal-percentage minimum, so
+label that qualification source `none_published` and require only a positive
+attempt denominator. Adjusted QBR and provider passer rating stay unavailable.
+
+This behavior is implemented and verified locally. It does not authorize a remote
+migration, archived production backfill, Worker deployment, or frontend release.

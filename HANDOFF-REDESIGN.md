@@ -1,10 +1,13 @@
 # Handoff — redesign + NFL dashboards
 
+**Current status:** see the 2026-09-08 Codex update at the end. The original
+sections below preserve the Claude handoff and its historical status.
+
 Written 2026-09-07, at the end of the planning/prototype session that opened this
 track. Everything here is either a fact verified that day or a decision Zach
 actually made. **Nothing visual is approved** — the prototype is a draft.
 
-Read `CLAUDE.md` first for the project's hard constraints; this document assumes
+Read `AGENTS.md` first for current Codex operating instructions; this document assumes
 them and does not repeat them. The short version of the ones that bite hardest:
 **no build step, no bundler, no framework, no npm at runtime**, ES modules loaded
 as static files, one flat stylesheet, `esc()` on every string rendered into HTML,
@@ -217,3 +220,192 @@ Things that will bite:
 - Syntax-check every edit: `cp src/foo.js /tmp/check.mjs && node --check /tmp/check.mjs`.
   That proves syntax, not that an imported name exists — load the page in a real
   browser and check the console after any structural change.
+
+
+## 9. Codex update — 2026-09-08
+
+Active work has moved to Codex with GPT-5.6 Sol Medium as the default lead. Read
+`AGENTS.md` for operating rules and delegation policy; `DECISIONS.md` remains
+decision history. `CLAUDE.md` stays
+available for detailed historical bug notes. No application code, Worker code,
+database, branch merge, or production deployment was changed by the documentation
+transition.
+
+The original Claude prototype described above is no longer the only design
+artifact. Codex has an isolated working review preview at:
+
+- Folder: `/Users/zguest/Documents/Codex/2026-09-07/hel/outputs/fixtura-preview/`
+- Local review URL: `http://localhost:8123/?design=11` while its server runs.
+- `REVIEW.md`: page map, review history, validation, and preview limitations.
+- `STATS-PLAN.md`: broader stat catalog and proposed player-by-game storage plan.
+
+These files are outside the Fixtura repository and are not deployed application
+code. If the folder is unavailable in a future environment, obtain the artifact
+before relying on it; the local URL alone is not portable. Do not mistake its
+simplified player popup or saved data for the existing app's full behavior.
+
+Zach reviewed the preview positively and accepted expanding storage to
+player-by-game records with locally calculated rankings. The UI now demonstrates
+collapsible leaders, category detail up to 32 players, one player per team,
+internal player popups, a detailed team season schedule, conference playoff seeds
+and cutoff, and contextual news. It preserves five original themes and explores
+Broadsheet and a more decorative Retro Card. Mobile includes simulated safe areas;
+real iPhone validation is still needed. Header text remains provisional.
+
+The full production player popup must be retained at integration. Additional stats
+and storage remain planned: no new ingestion or database migration is implemented.
+Ten preview categories have larger lists; tackles for loss still has only a small
+verified sample. Complete coverage, eligibility for rate stats, traded-player
+attribution, ties, and correction handling must be validated before production
+rankings. Do not promote the frozen preview dataset into a live data service.
+
+The branch/deploy hazard in section 1 still needs verification before any Worker
+release. The documentation review found the checkout on
+`redesign-nfl-dashboards`; this is not a fresh audit of production state. Preserve
+the current weekly snapshot job while building the accepted storage expansion.
+
+
+## 10. Player-by-game implementation milestone — 2026-09-08
+
+The first local storage foundation is now in the repository. See
+`worker/GAME-STATS.md`, `worker/src/game-stats-normalize.js`, and
+`worker/src/game-stats-store.js`. An additive migration lives in
+`worker/migrations/0001_nfl_game_stats.sql`; fresh `schema.sql` includes the same
+three tables. It has NOT been applied remotely. At this milestone the production
+router and cron were unchanged. Section 11 supersedes that status with the next
+local integration.
+
+Two real September 7, 2025 games validate 119 player-game rows and 959 numeric stat
+cells across the 57-field catalog. Tests use reduced public fixtures and disposable
+local databases only. Parser tests (8), migration preservation, actual D1 ingestion/
+rollback/concurrency checks, and the existing Worker suite (165/165) passed.
+
+Next: expand field verification and reconciliation, add bounded game discovery and
+capture with coverage/retry tracking, then read-only rankings/player APIs. Test a
+small week backfill before release. The visual preview is unchanged by this backend
+milestone; full player-popup integration and the production redesign remain ahead.
+
+## 11. Scheduled capture and read APIs — 2026-09-08
+
+The next local Worker slice is complete. `worker/src/game-stats-capture.js` now
+discovers completed NFL games from the current and previous week, caps each run at
+eight imports, retries partial/failed captures, revisits recent games for provider
+corrections, and records discovery/attempt state using additive migration `0002`.
+It runs as a third independent task from the existing 30-minute scheduled handler;
+the health check and weekly as-observed leaderboard snapshot remain unchanged.
+
+`worker/src/game-stats-read.js` adds public D1 reads for discovered-final coverage
+and a player's retained game logs. Responses explicitly avoid claiming complete
+season coverage. No leaderboard endpoint was added yet because a partial backfill
+could otherwise look like a valid rank. There is still no public write route and
+no frontend change.
+
+Local verification: 20 focused capture/parser/read tests passed; both additive
+migration checks passed; the isolated D1 correction/rollback test passed; and the
+full Worker suite passed 176/176 assertions. A local scheduled-event smoke test ran
+health, weekly snapshots, and game capture successfully, with no completed current
+games due at that moment. No remote migration or deployment was performed.
+
+Before deploying this Worker tree, apply migrations `0001` then `0002` to the
+intended remote D1 database and verify the branch/deploy hazard in section 1. The
+next product slice is a small archived-week backfill with reconciliation and
+coverage audit, followed by trustworthy league/team aggregation and UI wiring.
+
+## 12. Archived Week 1 audit — 2026-09-08
+
+A local-only audit tool now imports an exact archived NFL week through the real
+normalizer/store into the isolated stats-test D1 database. It rejects non-loopback
+targets and fails on missing games, import errors, partial coverage, or available
+team-total mismatches.
+
+The 2025 regular-season Week 1 audit passed: 16/16 finals imported, zero partial or
+failed games, 1,006 player-game rows, 7,979 numeric stat cells, and all 57 catalog
+fields observed. The database event IDs exactly matched the scoreboard. All 247
+available semantic team-total comparisons matched. Nine fumbles-lost comparisons
+were unavailable because ESPN omitted individual fumble rows for team totals of
+zero; the audit correctly left these missing rather than fabricating player zeroes.
+
+Forty-six fields appeared in every game. The 11 sparse fields were interception
+returns (present in 9 games), fumbles (13), and punt returns (14). This clears the
+foundation for total-stat aggregation with explicit coverage. Rate-stat rankings
+still require qualification and recomputation rules. The run wrote only to the
+disposable local database; no remote migration, backfill, or deployment occurred.
+
+Next: implement league/team total-stat ranking APIs with ties, traded-player
+attribution, top-32 results, one-player-per-team filtering, and audited coverage.
+
+## 13. Total-stat ranking API — 2026-09-09
+
+The local Worker now exposes `/stats/nfl/leaders` for catalog fields whose season
+aggregation is safely `sum` or `max`. It supports league and team scopes, optional
+through-week cutoffs, top-32/default bounded results, competition ties, combined
+traded-player league totals, team-only contributions, and one representative per
+team. Every result includes discovered-final coverage and never claims full-season
+completeness from the capture state alone.
+
+Recomputed rates and provider-only ratings return a validation error until their
+formulas and qualification rules are defined. This prevents QBR, passer rating,
+yards-per-attempt, and percentage fields from being summed or averaged incorrectly.
+
+The archived Week 1 dataset was also run through real ranking aggregation. Sample
+leaders were Josh Allen in passing yards, Derrick Henry in rushing yards, Zay
+Flowers in receiving yards, and Harold Landry III in sacks; competition ties were
+retained. Focused stats tests pass 29/29 and the complete Worker suite passes
+182/182 with real local-D1 route checks. Nothing was remotely migrated or deployed.
+
+Next: define qualified rate-stat formulas, then perform the migration/deployment
+audit before enabling capture and connecting the leader cards to the application.
+
+## 14. Qualified rate-stat ranking API — 2026-09-09
+
+The same local `/stats/nfl/leaders` route now supports all seven catalog fields
+marked for recomputation: passing, rushing, receiving, kickoff-return, punt-return,
+and gross-punting averages plus field-goal percentage. It sums the stored
+numerators and denominators first; it never averages provider weekly rates.
+
+The NFL's 2025 Guide for Statisticians publishes full-season minimums of 224 pass
+attempts, 100 carries, 32 receptions, 40 punts, and 20 kickoff or punt returns.
+For live views, Fixtura prorates those minimums from their original 16-game pace
+using the represented team's captured games and caps the result at the published
+full-season value. League totals for a traded player use the latest represented
+team for qualification; team and one-per-team rows use that team. Qualification
+happens before choosing one representative per team. Field-goal percentage is
+labeled as having no published minimum and only requires a positive denominator.
+
+Every returned rate row includes its numerator, denominator, team-game count,
+required minimum, and qualification status. The response also includes the exact
+formula, component keys, unit, qualification source, excluded-candidate count,
+and the same discovered-final coverage used by total rankings. Missing numerators
+fail closed, stored zeroes remain real values, and zero denominators never divide.
+Adjusted QBR and provider passer rating remain unavailable because this slice does
+not have legitimate season recomputation rules for them.
+
+Focused stats and migration checks pass 38/38. The full local Worker suite passes
+187/187, including a real D1-backed HTTP check for the recomputed passing average,
+its live threshold, and exclusion of an under-volume player. No remote migration,
+backfill, Worker deployment, or frontend wiring occurred.
+
+Next: perform the documented branch and remote-migration readiness audit, prepare
+the exact migration/deployment sequence for review, then connect the collapsible
+league/team leader cards and existing in-app player popup after the data service is
+available in the intended environment.
+
+## 15. Production-readiness audit — 2026-09-09
+
+The live Worker and remote D1 were inspected read-only. Production health and
+`/trends` return 200, `stat_snapshots` exists remotely, and `/stats` correctly
+returns 404 before release. None of the four new NFL player-game tables exists
+remotely. This confirms the documented branch hazard: production is running the
+trends work from `redesign-nfl-dashboards`, while `main` still lacks `trends.js`.
+
+The production D1 database supports Time Travel and yielded a recovery bookmark.
+A local Wrangler deployment dry run succeeded at 107.70 KiB (26.36 KiB gzip),
+with both scheduled capture jobs, stats routes, and rate definitions present in
+the bundle. `worker/STATS-ROLLOUT.md` now contains the reviewed source gate,
+ordered migrations, schema checks, smoke tests, and Worker-first rollback plan.
+
+No remote write or deployment was performed. The next release action must apply
+migrations `0001` and `0002` before deploying this exact reviewed Worker tree.
+After release validation, the next product slice is frontend wiring for the
+collapsible league/team cards, top-32 detail view, one-player-per-team option, and
+existing in-app player popup.

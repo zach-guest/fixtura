@@ -174,6 +174,61 @@ chk "GET only" 400 "$(code $T/t7)"
 curl -s -D $T/t8 -o /dev/null "$B/trends/leaders?season=2099" -H "Origin: https://evil.example"
 chk "unknown origin gets no ACAO" "" "$(hdr $T/t8 access-control-allow-origin)"
 
+echo "== retained NFL stats: public D1 reads =="
+$WRANGLER d1 execute fixtura --local --command \
+  "DELETE FROM nfl_player_game_stats WHERE event_id IN ('gst1','gst2');
+   DELETE FROM nfl_player_games WHERE event_id IN ('gst1','gst2');
+   DELETE FROM nfl_stat_games WHERE event_id IN ('gst1','gst2');
+   DELETE FROM nfl_game_capture_state WHERE event_id IN ('gst1','gst2');
+   INSERT INTO nfl_game_capture_state
+     (event_id,season,season_type,week,kickoff,discovered_at,last_seen_at,last_attempt_at,last_success_at,attempt_count,status,last_error)
+   VALUES ('gst1',2098,2,1,'2098-09-07T17:00:00Z',1700000000,1700000200,1700000100,1700000100,1,'captured',NULL),
+          ('gst2',2098,2,1,'2098-09-07T20:00:00Z',1700000000,1700000200,1700000200,NULL,2,'failed','private upstream detail');
+   INSERT INTO nfl_stat_games
+     (event_id,season,season_type,week,kickoff,source,source_url,source_updated_at,captured_at,first_captured_at,content_hash,parser_version,coverage,warnings_json)
+   VALUES ('gst1',2098,2,1,'2098-09-07T17:00:00Z','espn','https://example.invalid/gst1',NULL,1700000100,1700000100,'test-hash',1,'complete','[]');
+   INSERT INTO nfl_player_games (event_id,athlete_id,team_id,name,position)
+   VALUES ('gst1','4432577','34','Test Quarterback','QB'),
+          ('gst1','5550001','14','Tie Quarterback','QB');
+   INSERT INTO nfl_player_game_stats
+     (event_id,athlete_id,team_id,category,stat_key,value,raw_value,aggregation)
+   VALUES ('gst1','4432577','34','passing','passingYards',250,'250','sum'),
+          ('gst1','4432577','34','passing','passingAttempts',25,'25','sum'),
+          ('gst1','5550001','14','passing','passingYards',250,'250','sum'),
+          ('gst1','5550001','14','passing','passingAttempts',10,'10','sum');" >/dev/null 2>&1
+
+curl -s -D $T/gs1 -o $T/gs1b "$B/stats/nfl/coverage?season=2098" -H "Origin: $APP"
+chk "coverage status" 200 "$(code $T/gs1)"
+chk "coverage is public" "public, max-age=300" "$(hdr $T/gs1 cache-control)"
+chk "discovered finals are counted" 2 "$(jq_ $T/gs1b "d['weeks'][0]['discovered_final_games']")"
+chk "captured games are counted" 1 "$(jq_ $T/gs1b "d['weeks'][0]['captured_games']")"
+chk "failed attempts are counted" 1 "$(jq_ $T/gs1b "d['weeks'][0]['failed_games']")"
+chk "coverage does not claim a complete season" True "$(jq_ $T/gs1b "'does not establish full schedule or season completeness' in d['coverage_scope']")"
+chk "capture errors are not exposed" False "$(python3 -c "print('private upstream detail' in open('$T/gs1b').read())")"
+
+curl -s -D $T/gs2 -o $T/gs2b "$B/stats/nfl/players/4432577/games?season=2098" -H "Origin: $APP"
+chk "player games status" 200 "$(code $T/gs2)"
+chk "player remains an in-app identity" "Test Quarterback" "$(jq_ $T/gs2b "d['player']['name']")"
+chk "stored stat is returned" 250 "$(jq_ $T/gs2b "d['games'][0]['stats']['passing']['passingYards']['value']")"
+curl -s -D $T/gs3 -o /dev/null -X POST "$B/stats/nfl/coverage?season=2098" -H "Origin: $APP"
+chk "stats writes are not public" 400 "$(code $T/gs3)"
+
+curl -s -D $T/gs4 -o $T/gs4b "$B/stats/nfl/leaders?season=2098&category=passing&stat=passingYards" -H "Origin: $APP"
+chk "leaders status" 200 "$(code $T/gs4)"
+chk "leaders are public" "public, max-age=300" "$(hdr $T/gs4 cache-control)"
+chk "equal totals share rank one" "[1, 1]" "$(jq_ $T/gs4b "list(r['rank'] for r in d['rows'])")"
+chk "incomplete discovered coverage stays partial" partial "$(jq_ $T/gs4b "d['coverage']['status']")"
+curl -s -o $T/gs5b "$B/stats/nfl/leaders?season=2098&category=passing&stat=passingYards&scope=team&teamId=34" -H "Origin: $APP"
+chk "team scope keeps only that contribution" "['4432577']" "$(jq_ $T/gs5b "list(r['athlete_id'] for r in d['rows'])")"
+curl -s -D $T/gs6 -o /dev/null "$B/stats/nfl/leaders?season=2098&category=passing&stat=QBRating" -H "Origin: $APP"
+chk "provider-only ratings need explicit rules" 400 "$(code $T/gs6)"
+curl -s -D $T/gs7 -o $T/gs7b "$B/stats/nfl/leaders?season=2098&category=passing&stat=yardsPerPassAttempt" -H "Origin: $APP"
+chk "qualified rate leaders status" 200 "$(code $T/gs7)"
+chk "rate is recomputed from stored components" 10 "$(jq_ $T/gs7b "d['rows'][0]['value']")"
+chk "live threshold follows represented team games" 14 "$(jq_ $T/gs7b "d['rows'][0]['required_minimum']")"
+chk "under-volume candidates are excluded" 1 "$(jq_ $T/gs7b "d['excluded_candidates']")"
+chk "rate definition identifies its denominator" passingAttempts "$(jq_ $T/gs7b "d['rate']['denominator']['key']")"
+
 # --------------------------------------------------------------------------
 # Authenticated. Seeds the local D1 the way a completed Google login would.
 # --------------------------------------------------------------------------

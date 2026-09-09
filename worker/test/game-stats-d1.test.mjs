@@ -1,0 +1,48 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+const base=process.env.STATS_TEST_URL||'http://127.0.0.1:8791';
+const url=new URL(base);
+if (!['localhost','127.0.0.1','[::1]'].includes(url.hostname)) throw Error('D1 tests are LOCAL ONLY');
+const fixture=JSON.parse(await readFile(new URL('./fixtures/nfl-401772723.json',import.meta.url),'utf8'));
+const second=JSON.parse(await readFile(new URL('./fixtures/nfl-401772830.json',import.meta.url),'utf8'));
+async function call(input) {const r=await fetch(base,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});return {status:r.status,body:await r.json()};}
+const input=(summary, capturedAt=1788840000)=>({summary,options:{expectedEventId:summary.header.id,capturedAt}});
+function passing(s){return s.boxscore.players.find(t=>t.team.id==='34').statistics.find(c=>c.name==='passing').athletes[0];}
+test('D1: additive setup, safe reruns, corrections, freshness, missing data and atomic rollback',async()=>{
+ assert.equal((await call({action:'setup'})).status,200);
+ assert.equal((await call({action:'setup'})).status,200);
+ assert.equal((await call(input(fixture))).body.status,'inserted');
+ let before=(await call({action:'inspect'})).body;
+ assert.equal(before.games.length,1);assert.ok(before.players.length>30);assert.ok(before.stats.length>300);
+ assert.equal(before.stats.find(s=>s.athlete_id==='4432577'&&s.stat_key==='passingYards').value,188);
+ assert.equal(before.stats.find(s=>s.athlete_id==='4432577'&&s.category==='passing'&&s.stat_key==='interceptions').value,1);
+ assert.equal((await call(input(fixture,1788840100))).body.status,'unchanged');
+ assert.deepEqual((await call({action:'inspect'})).body,before);
+ assert.equal((await call(input(second,1788840200))).body.status,'inserted');
+ const corrected=structuredClone(fixture);passing(corrected).stats[1]='190';
+ assert.equal((await call(input(corrected,1788840300))).body.status,'updated');
+ const after=(await call({action:'inspect'})).body;
+ assert.equal(after.games.length,2);
+ assert.equal(after.stats.find(s=>s.athlete_id==='4432577'&&s.stat_key==='passingYards').value,190);
+ assert.equal(after.games.find(g=>g.event_id===fixture.header.id).first_captured_at,1788840000);
+ assert.equal((await call(input(fixture,1788840000))).body.status,'stale');
+ const partial=structuredClone(fixture);passing(partial).stats[1]='--';
+ assert.equal((await call(input(partial,1788840400))).body.status,'partial-rejected');
+ const invalid=structuredClone(fixture);invalid.boxscore.players.pop();
+ assert.equal((await call(input(invalid,1788840400))).status,400);
+ const oldSource=structuredClone(fixture);oldSource.meta.lastUpdatedAt='2025-09-07T20:00:00Z';
+ assert.equal((await call(input(oldSource,1788840500))).body.status,'stale');
+ assert.deepEqual((await call({action:'inspect'})).body,after);
+ await call({action:'fail-next'});
+ const fail=structuredClone(corrected);passing(fail).stats[1]='123456789';
+ assert.equal((await call(input(fail,1788840600))).status,400);
+ assert.deepEqual((await call({action:'inspect'})).body,after);
+ const older=structuredClone(corrected), newer=structuredClone(corrected);
+ passing(older).stats[1]='191';passing(newer).stats[1]='192';
+ const concurrent=await Promise.all([call(input(newer,1788840800)),call(input(older,1788840700))]);
+ assert.ok(concurrent.every(r=>r.status===200));
+ const latest=(await call({action:'inspect'})).body;
+ assert.equal(latest.stats.find(s=>s.athlete_id==='4432577'&&s.stat_key==='passingYards').value,192);
+ assert.equal(latest.games.find(g=>g.event_id===fixture.header.id).captured_at,1788840800);
+});

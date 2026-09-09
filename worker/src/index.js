@@ -27,6 +27,8 @@ import { handleAuth } from './auth.js';
 import { handleMe } from './me.js';
 import { handlePools } from './pools.js';
 import { captureLeaderSnapshot, handleTrends } from './trends.js';
+import { captureNFLGameStats } from './game-stats-capture.js';
+import { handleGameStats } from './game-stats-read.js';
 
 /**
  * Path prefixes that are per-user. A request whose first segment is on this
@@ -40,10 +42,10 @@ const PRIVATE_PREFIXES = new Set(['auth', 'me', 'pools', 'picks']);
  * the private prefixes have — otherwise a proxy route added later under one of
  * these names would be silently shadowed instead of failing loudly.
  */
-const LOCAL_PUBLIC_PREFIXES = new Set(['health', 'trends']);
+const LOCAL_PUBLIC_PREFIXES = new Set(['health', 'trends', 'stats']);
 
 // Provably disjoint, all three ways. If a future proxy route is ever named
-// `picks` or `trends`, this throws on the first request after deploy rather
+// `picks`, `trends`, or `stats`, this throws on the first request after deploy rather
 // than quietly caching private data or shadowing a route.
 for (const name of Object.keys(ROUTES)) {
   if (PRIVATE_PREFIXES.has(name)) {
@@ -73,6 +75,10 @@ export default {
     // fails should not mask a database that is down, and vice versa. The
     // capture writes at most once a week — see trends.js for the guard.
     ctx.waitUntil(runLeaderSnapshot(env, ctx));
+    // Final-game facts are independent from the as-observed weekly leader
+    // snapshots. This job is bounded and correction-aware; one can fail without
+    // preventing the other from running.
+    ctx.waitUntil(runGameStatsCapture(env, ctx));
   },
 
   async fetch(request, env, ctx) {
@@ -88,6 +94,7 @@ export default {
     try {
       if (head === 'health') return health(env, origin);
       if (head === 'trends') return await handleTrends(request, segments, env, ctx, origin);
+      if (head === 'stats') return await handleGameStats(request, segments, env, ctx, origin);
 
       if (PRIVATE_PREFIXES.has(head)) {
         if (head === 'auth')  return await handleAuth(request, segments, env, ctx, origin);
@@ -189,6 +196,18 @@ async function runLeaderSnapshot(env, ctx) {
     console.log(`[snapshot cron] ${outcome}`);
   } catch (err) {
     const msg = `[snapshot cron] capture failed: ${err && err.stack ? err.stack : err}`;
+    console.error(msg);
+    throw new Error(msg);
+  }
+}
+
+/** Capture completed NFL player/game facts and keep failures visible to alerts. */
+async function runGameStatsCapture(env, ctx) {
+  try {
+    const outcome = await captureNFLGameStats(env, ctx);
+    console.log(`[game stats cron] ${JSON.stringify(outcome)}`);
+  } catch (err) {
+    const msg = `[game stats cron] capture failed: ${err && err.stack ? err.stack : err}`;
     console.error(msg);
     throw new Error(msg);
   }
