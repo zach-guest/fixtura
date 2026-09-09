@@ -110,9 +110,9 @@ use them. Prefer wiring new events in JavaScript.
   A 401 signs out; other failures do not. Sync failure cannot block local changes.
   Auth starts after first paint. Strip OAuth fragment tokens promptly and keep
   bearer handling centralized; do not switch to cross-site cookies casually.
-- Add colors through theme tokens for every installed theme. The app currently
-  has Paper, Midnight, Ice, Terminal, Crimson; Broadsheet and Retro are preview
-  additions until integrated. Do not scatter hardcoded theme colors. Actual team
+- Add colors through theme tokens for every installed theme. The app has Paper,
+  Midnight, Ice, Terminal, Crimson, Broadsheet, and Retro Card. Do not scatter
+  hardcoded theme colors. Actual team
   brand colors and computed contrasting labels are a deliberate exception.
 - Check every new CSS class against the global stylesheet; prefix feature classes
   to avoid collisions. Keep filter chips visually distinct from navigation tabs.

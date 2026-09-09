@@ -405,3 +405,23 @@ remained intact.
 The release authorizes the bounded scheduled capture and public read APIs already
 described. It does not authorize an archived production backfill, schema expansion,
 provider change, QBR derivation, or frontend release.
+
+
+## First NFL leader surfaces — 2026-09-09
+
+The initial league leaderboard lives inside the existing NFL Scores view. NFL team
+leaderboards live in a Stats tab placed after Schedule and Roster. This is the
+smallest integration that delivers the approved aggregation behavior without
+settling the still-open main-navigation shape for a dedicated NFL hub. Both use one
+shared component so they can be repositioned later.
+
+Leader sections start collapsed and fetch only when opened. Offense is the default;
+Defense and All are explicit filters. Cards show three players and open a list of
+up to 32. The league list alone offers one player per team. Player selection always
+opens Fixtura's existing player popup. Missing or not-yet-captured data is described
+honestly with discovered-final coverage and is never rendered as a zero ranking.
+
+Broadsheet and Retro Card join the existing five themes. Retro may use the approved
+starburst, ribbon, texture, and bolder card geometry, but no motto is committed yet.
+New display headings omit terminal periods. The current integration does not add
+news, redesign standings or schedules, or establish a separate NFL navigation tab.

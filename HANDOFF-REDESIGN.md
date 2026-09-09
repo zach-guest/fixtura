@@ -432,3 +432,38 @@ rollback. `worker/STATS-ROLLOUT.md` contains the full recovery procedure.
 Next product work: connect the production reads to the collapsible NFL/team stat
 leader sections, top-32 detail view, optional one-player-per-team filter, and the
 existing in-app player popup.
+
+## 17. NFL leader frontend integration — 2026-09-09
+
+The first production-data frontend slice is implemented locally on
+`redesign-nfl-dashboards`. The existing NFL Scores surface now has a collapsed
+league-leaders section, and NFL team pages have a Stats tab after Schedule and
+Roster. This does not create a new main-navigation NFL hub; the shared dashboard
+component can move there later if that navigation decision is made.
+
+Opening a section fetches the selected Offense, Defense, or All group. Seventeen
+verified categories are included, with top-three card previews and a full list of
+up to 32 players. League details offer the optional one-player-per-team filter.
+Every player action opens Fixtura's existing player popup. Empty production data
+is labeled as uncaptured rather than zero, and each card/detail includes the
+Worker's discovered-final coverage language.
+
+Broadsheet and Retro Card are now selectable alongside the five existing themes.
+Retro adds the reviewed navy/yellow/red card language, ribbon, texture, and an
+optically centered season starburst without committing to the undecided motto.
+Broadsheet uses the cleaner editorial treatment. The layout includes responsive
+one-column leader cards and safe-area padding for iPhone camera/home-indicator and
+landscape edges. Headings introduced by this slice do not use terminal periods.
+
+Focused frontend tests pass 3/3, all changed JavaScript files pass syntax checks,
+and real-browser checks passed for league and team expansion, live empty states,
+detail modal behavior, both new themes, and a 390x844 responsive viewport. The
+deployed Worker correctly returns zero discovered finals for the current season,
+so live player rows and player-popup handoff could not yet be exercised with real
+production leader data; their rendering, escaping, query construction, and popup
+callback are covered by fixtures and review. No frontend deployment was performed.
+
+Next redesign work: build conference-wide standings with a visible playoff/wild-
+card cutoff, then expand the team Schedule tab into the agreed full-season detail.
+NFL/team news placement, the pregame next-game duplication, and the remaining
+prototype copy cleanup are still open.

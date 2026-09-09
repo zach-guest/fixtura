@@ -1,8 +1,10 @@
 import { S } from '../state.js';
 import { favIndex, saveFavs, toggleFav } from '../account.js';
 import { wireCards } from '../components/gamecard.js';
-import { rosterHTML, wirePlayers } from '../components/modal.js';
+import { leaderSectionHTML, openLeaderDetail, wireLeaderSection } from '../components/dashboard.js';
+import { openPlayer, rosterHTML, wirePlayers } from '../components/modal.js';
 import { API, CORE, LEAGUES, WIKI } from '../config.js';
+import { fetchNFLLeaderGroup, resolveNFLSeason } from '../nfl.js';
 import { $, esc, gameTime, get, initials, logoOf, oddsLine, store, teamName, ymd } from '../util.js';
 
 /* ========================= TEAMS ========================= */
@@ -194,6 +196,7 @@ function runSearch(quiet){
 
 async function loadTeam(){
   const body=$('#teamBody'),t=S.activeTeam;
+  if(t.league!=='nfl'&&S.teamTab==='stats')S.teamTab='schedule';
   body.innerHTML='<div class="msg">Loading '+esc(t.name)+'\u2026</div>';
   try{
     const info=await get(API+'/'+LEAGUES[t.league].path+'/teams/'+t.id).catch(()=>null);
@@ -207,13 +210,45 @@ async function loadTeam(){
       '<button class="favstar '+(isf?'on':'')+'" id="favBtn">'+(isf?'\u2605 Favorite':'\u2606 Add')+'</button></div>'+
       '<div class="subbar"><button class="chip '+(S.teamTab==='schedule'?'on':'')+'" data-tt="schedule">Schedule</button>'+
       '<button class="chip '+(S.teamTab==='roster'?'on':'')+'" data-tt="roster">Roster</button>'+
+      (t.league==='nfl'?'<button class="chip '+(S.teamTab==='stats'?'on':'')+'" data-tt="stats">Stats</button>':'')+
       '<button class="chip '+(S.teamTab==='inj'?'on':'')+'" data-tt="inj">Injuries</button></div>'+
       '<div id="ttBody"><div class="msg">Loading\u2026</div></div>';
     $('#favBtn').onclick=()=>{toggleFav({name:(ti&&ti.displayName)||t.name,short:(ti&&ti.shortDisplayName)||t.short||t.name,
       league:t.league,id:t.id,logo:logo||''});renderTeamsShell();};
     document.querySelectorAll('[data-tt]').forEach(b=>b.onclick=()=>{S.teamTab=b.dataset.tt;loadTeam();});
-    if(S.teamTab==='schedule')loadTeamSchedule();else if(S.teamTab==='roster')loadTeamRoster();else loadTeamInjuries();
+    if(S.teamTab==='schedule')loadTeamSchedule();else if(S.teamTab==='roster')loadTeamRoster();
+    else if(S.teamTab==='stats')loadTeamStats((ti&&ti.displayName)||t.name);else loadTeamInjuries();
   }catch(e){body.innerHTML='<div class="msg err">Couldn\'t load this team.</div>';}
+}
+
+let teamLeaderRequest=0;
+
+function drawTeamLeaders(label,{categories=[],loading=false,error=null}={}){
+  const root=$('#ttBody'),t=S.activeTeam;
+  if(!root||!t||t.league!=='nfl'||S.teamTab!=='stats')return;
+  root.innerHTML=leaderSectionHTML({scope:'team',label:label+' leaders',season:S.nflLeadersSeason,
+    expanded:S.teamLeadersExpanded,filter:S.teamLeadersFilter,categories:categories,loading:loading,error:error});
+  wireLeaderSection(root,{
+    onToggle:()=>{S.teamLeadersExpanded=!S.teamLeadersExpanded;if(S.teamLeadersExpanded)loadTeamStats(label);else{teamLeaderRequest++;drawTeamLeaders(label);}},
+    onFilter:filter=>{S.teamLeadersFilter=filter;loadTeamStats(label);},
+    onDetail:definitionId=>openLeaderDetail({scope:'team',label:label+' leaders',season:S.nflLeadersSeason,
+      teamId:String(t.id),definitionId:definitionId,onPlayer:id=>openPlayer(id,'football/nfl')}),
+    onPlayer:id=>openPlayer(id,'football/nfl')
+  });
+}
+
+async function loadTeamStats(label){
+  const t=S.activeTeam,request=++teamLeaderRequest;
+  drawTeamLeaders(label,{loading:S.teamLeadersExpanded});
+  if(!S.teamLeadersExpanded)return;
+  try{
+    const season=S.nflLeadersSeason||await resolveNFLSeason();
+    if(request!==teamLeaderRequest||S.activeTeam!==t||S.teamTab!=='stats')return;
+    S.nflLeadersSeason=season;
+    const categories=await fetchNFLLeaderGroup({season:season,scope:'team',teamId:String(t.id),group:S.teamLeadersFilter});
+    if(request!==teamLeaderRequest||S.activeTeam!==t||S.teamTab!=='stats')return;
+    drawTeamLeaders(label,{categories:categories});
+  }catch(e){if(request===teamLeaderRequest)drawTeamLeaders(label,{error:e});}
 }
 
 async function fetchTeamEvents(t){

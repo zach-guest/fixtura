@@ -1,7 +1,10 @@
 import { S } from '../state.js';
 import { gameCard, sortEvents, wireCards } from '../components/gamecard.js';
+import { leaderSectionHTML, openLeaderDetail, wireLeaderSection } from '../components/dashboard.js';
+import { openPlayer } from '../components/modal.js';
 import { cfgHTML, wireCfg } from '../components/settings.js';
 import { API, LEAGUES, LIVE_SCAN, PRIMARY, SOCCER_GROUPS } from '../config.js';
+import { fetchNFLLeaderGroup, resolveNFLSeason } from '../nfl.js';
 import { $, dayKey, dayLabel, esc, get, inputDate, stamp, weekBounds, ymd } from '../util.js';
 
 /* ========================= SCORES ========================= */
@@ -22,6 +25,7 @@ function renderScoresShell(){
   }
   const lbl=S.liveMode?'LIVE RIGHT NOW':(S.weekMode?(()=>{const b=weekBounds(S.dateObj);
     return 'WEEK OF '+b[0].toLocaleDateString('en-US',{month:'short',day:'numeric'})+' \u2013 '+b[1].toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});})():dayLabel(S.dateObj));
+  if(!S.liveMode&&S.league==='nfl')html+='<div id="nflLeaders"></div>';
   html+='<div class="daylabel cond">'+lbl+'</div><div id="games"><div class="msg">Loading...</div></div>';
   $('#main').innerHTML=html;
   if(S.showCfg)wireCfg();
@@ -34,6 +38,36 @@ function renderScoresShell(){
   if($('#next'))$('#next').onclick=()=>{S.dateObj.setDate(S.dateObj.getDate()+(S.weekMode?7:1));renderScoresShell();loadScores();};
   if($('#today'))$('#today').onclick=()=>{S.dateObj=new Date();renderScoresShell();loadScores();};
   if($('#dpick'))$('#dpick').onchange=e=>{const p=e.target.value.split('-');S.dateObj=new Date(+p[0],+p[1]-1,+p[2]);renderScoresShell();loadScores();};
+  if($('#nflLeaders')){if(S.nflLeadersExpanded)loadNFLLeaders();else drawNFLLeaders();}
+}
+
+let nflLeaderRequest=0;
+
+function drawNFLLeaders({categories=[],loading=false,error=null}={}){
+  const root=$('#nflLeaders');
+  if(!root||S.liveMode||S.league!=='nfl')return;
+  root.innerHTML=leaderSectionHTML({scope:'league',label:'Across the NFL',season:S.nflLeadersSeason,
+    expanded:S.nflLeadersExpanded,filter:S.nflLeadersFilter,categories:categories,loading:loading,error:error});
+  wireLeaderSection(root,{
+    onToggle:()=>{S.nflLeadersExpanded=!S.nflLeadersExpanded;if(S.nflLeadersExpanded)loadNFLLeaders();else{nflLeaderRequest++;drawNFLLeaders();}},
+    onFilter:filter=>{S.nflLeadersFilter=filter;loadNFLLeaders();},
+    onDetail:definitionId=>openLeaderDetail({scope:'league',label:'Across the NFL',season:S.nflLeadersSeason,
+      definitionId:definitionId,onPlayer:id=>openPlayer(id,'football/nfl')}),
+    onPlayer:id=>openPlayer(id,'football/nfl')
+  });
+}
+
+async function loadNFLLeaders(){
+  const request=++nflLeaderRequest;
+  drawNFLLeaders({loading:true});
+  try{
+    const season=S.nflLeadersSeason||await resolveNFLSeason();
+    if(request!==nflLeaderRequest||!$('#nflLeaders')||S.liveMode||S.league!=='nfl')return;
+    S.nflLeadersSeason=season;
+    const categories=await fetchNFLLeaderGroup({season:season,scope:'league',group:S.nflLeadersFilter});
+    if(request!==nflLeaderRequest||!$('#nflLeaders')||S.liveMode||S.league!=='nfl')return;
+    drawNFLLeaders({categories:categories});
+  }catch(e){if(request===nflLeaderRequest)drawNFLLeaders({error:e});}
 }
 
 function dateParam(){
@@ -57,6 +91,7 @@ async function loadScores(){
   const L=LEAGUES[S.league];
   try{
     const d=await get(API+'/'+L.path+'/scoreboard?dates='+dateParam()+(L.extra||''));
+    if(S.league==='nfl'&&Number.isInteger(d&&d.season&&d.season.year))S.nflLeadersSeason=d.season.year;
     const evs=d.events||[];
     box.innerHTML=evs.length?(S.weekMode?groupByDay(evs,S.league):sortEvents(evs).map(e=>gameCard(e,S.league)).join(''))
       :'<div class="msg">No '+L.label+' games in this '+(S.weekMode?'week':'date')+'</div>';
