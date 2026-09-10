@@ -10,7 +10,14 @@ Production spot-checks after the deploy: default theme is `broadsheet`, the
 FIXTURA `<h1>` no longer carries the stray `.cond` class, `nav.views button`
 serves the corrected sans-serif rule, and both the News tab and team Schedule
 code are present in the served JS. The Worker (untouched by this deploy) is
-still healthy. Sections 17–19 contain the prior implementation and release
+still healthy. §23 records a direct production check of the capture systems
+made ahead of tonight's real Week 1 kickoff, plus four open items found while
+checking (one pool-membership note, two operational TODOs, and confirmation
+that the historical branch-deploy hazard does not currently apply) — read it
+before assuming those are resolved. **Zach is taking the next planning round
+— the still-open redesign decisions listed at the end of §23 — to Codex/
+ChatGPT rather than deciding them in this session; nothing past this point was
+decided here.** Sections 17–19 contain the prior implementation and release
 record. Older sections preserve the original Claude handoff and historical
 status.
 
@@ -710,3 +717,71 @@ deploy; §20–22 (Broadsheet default, app-wide type-system change with two
 live-reviewed corrections, NFL News tab, detailed NFL team Schedule, per-team
 News) shipped together in one push to `main`/GitHub Pages. See the status line
 at the top of this file for the production verification that followed.
+
+## 23. Week 1 kickoff — production capture check, and open items for the next planning session — 2026-09-09
+
+No code changed in this section. Zach asked, ahead of tonight's actual Week 1
+opener (Patriots @ Seahawks, event `401872656`, kickoff 8:20 PM ET), whether
+the automated capture systems were positioned correctly. Checked production
+directly — Worker code via `workers_get_worker_code`, live D1 via
+`d1_database_query`, and live ESPN state — rather than trusting the docs.
+
+**Confirmed working:**
+- `/health` reports ok, D1 reachable, no missing secrets.
+- The *deployed* Worker bundle (not just the repo) wires `scheduled()` to all
+  three jobs — health check, leader-snapshot capture, game-stats capture — and
+  `MAX_IMPORTS = 8` matches the documented per-run cap exactly. The historical
+  deployed-from-a-branch hazard does not apply right now.
+- Pick'em locking is real: the stored `locks_at` for tonight's game is
+  `2026-09-09 20:20 ET`, ESPN's actual kickoff, not a placeholder.
+- `stat_snapshots` and `nfl_game_capture_state` being empty right now is
+  **correct, not broken** — ESPN's 2026 leaders endpoint is still a genuine
+  404 (checked live), and game-stats capture only imports completed games.
+  Both should start populating as today's games go final; the game-stats cron
+  runs every 30 minutes.
+
+**Found while checking, not yet acted on:**
+- **Only Zach (user id 1) is a member of "Zach's Group" (pool 3, join code
+  `GKFJ3D`).** A second account exists (Jared Nechamkin, user id 6, signed in)
+  but has not joined any pool. Zach has already submitted all 16 Week 1 picks
+  for himself. If other people are expected to play, they need to join before
+  each game's own kickoff locks it.
+- **Two disposable test pools are still live in production D1** — "Test 1"
+  (id 6, confidence mode, 5 picks) and "test 2" (id 7, survivor mode, 1 pick),
+  both owned by Zach. Harmless but not cleaned up; not deleted without asking
+  first per the standing rule against unprompted destructive D1 writes.
+- **The D1 backup-plan upgrade flagged in "Open decisions" item 4** ("upgrade
+  to the $5/mo Workers plan before real picks exist — before 2026-09-09") has
+  a deadline of today, and 16 real picks already exist. Billing tier isn't
+  visible through the D1/Workers API used here, so this could not be verified
+  either way — needs a direct look at the Cloudflare dashboard.
+- **The Cloudflare Worker error-rate email alert is still not configured**
+  (same item as before). Tonight is the first night all three cron jobs have
+  real work to do; nothing currently notifies anyone if one throws.
+
+**Next planning session moves to Codex/ChatGPT.** Zach is taking the
+still-open redesign decisions there rather than deciding them in this session.
+For whichever tool picks this up next, the concrete undecided items are
+exactly the ones listed in §5 "Still open" above, refined by what's since
+shipped:
+- **Which serif — likely already settled, not confirmed in writing.**
+  Newsreader shipped as part of Broadsheet (§20) and Zach reviewed/approved it
+  live in production, correcting *where* it applies (nav tabs stay sans-serif)
+  but never objecting to *which* typeface. Worth a one-line confirmation
+  before treating it as closed, but there is no live signal it's still
+  actually contested.
+- **A HOME tab is still fully undecided** — whether Fixtura gets a landing
+  view at all, and if so what would be on it. Nothing has been built toward
+  this.
+- **The mobile bottom bar does not exist in the real app at all** — checked
+  the actual codebase (grepped for any bottom-nav/tab-bar implementation) to
+  confirm this before recording it: today's mobile nav is the same
+  horizontally-scrollable `nav.views` row used on desktop, just with smaller
+  type/padding under the 700px breakpoint. The "first four tabs + a More
+  sheet" idea is a proposal that exists only in the original standalone
+  design prototype (§7) and was never started in the shipped app. Treat this
+  as a bigger navigation-paradigm decision, not a small tweak, if it's picked
+  up.
+- **The page-content walkthrough Zach wanted** ("idk if I am good with what
+  is on each page yet," §5) has not happened. Nothing about the current page
+  contents should be assumed settled just because it shipped.
