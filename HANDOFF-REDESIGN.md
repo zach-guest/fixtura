@@ -1572,7 +1572,12 @@ bookmark `000005ac-00000000-000050ee-723160e897eebd5c48317d97d4d0da18`.
 matching a local apply of the same file; users 2, picks 22, pools 3,
 stat_snapshots 194, nfl_player_game_stats 16,654 unchanged; `/health` ok. The
 deployed Worker does not reference these tables yet. Remaining before the
-deploy: `0004`, then `0005` exactly once.
+deploy: `0005` exactly once (`0004` applied, below).
+
+**Migration 0004 applied to remote D1 (2026-09-22).** Pre-apply bookmark
+`000005ad-00000002-000050ee-601f78bd0f99418c4010adb671c67767`; 21 rows written.
+Verified: all 5 `cfb_epa_*` tables and 6 `idx_cfb_*` indexes exist, matching a
+local apply; existing counts unchanged; `/health` ok.
 
 **Exact next task:** deploy the Worker before Sunday 2026-09-27. Agreed
 order: apply EPA migrations `0003`, `0004`, `0005` to remote D1 (backup
