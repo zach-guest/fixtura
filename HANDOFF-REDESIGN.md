@@ -1571,16 +1571,22 @@ bookmark `000005ac-00000000-000050ee-723160e897eebd5c48317d97d4d0da18`.
 22 rows written. Verified: all 5 `nfl_epa_*` tables and 6 named indexes exist,
 matching a local apply of the same file; users 2, picks 22, pools 3,
 stat_snapshots 194, nfl_player_game_stats 16,654 unchanged; `/health` ok. The
-deployed Worker does not reference these tables yet. Remaining before the
-deploy: `0005` exactly once (`0004` applied, below).
+deployed Worker does not reference these tables yet. `0004` and `0005` applied, below.
 
 **Migration 0004 applied to remote D1 (2026-09-22).** Pre-apply bookmark
 `000005ad-00000002-000050ee-601f78bd0f99418c4010adb671c67767`; 21 rows written.
 Verified: all 5 `cfb_epa_*` tables and 6 `idx_cfb_*` indexes exist, matching a
 local apply; existing counts unchanged; `/health` ok.
 
-**Exact next task:** deploy the Worker before Sunday 2026-09-27. Agreed
-order: apply EPA migrations `0003`, `0004`, `0005` to remote D1 (backup
-above is verified), each separately approved, then `npm run deploy` from a
-clean `main`, then check `/health` and the next cron's `[game stats cron]`
+**Migration 0005 applied to remote D1 (2026-09-22) — do not run it again.**
+Pre-check: none of its 16 columns or 2 drive tables existed, all EPA tables
+empty. Pre-apply bookmark
+`000005ad-0000000c-000050ee-feb13ffd23afb8e0356afc32d7f6cfad`; 23 rows
+written, no error. Verified: all 39 EPA objects and all 216 columns across the
+12 EPA tables (name, type, not-null, pk) match a fresh local apply of
+`schema.sql`; existing counts unchanged; `/health` ok. Remote D1 schema now
+matches `main`.
+
+**Exact next task:** deploy the Worker before Sunday 2026-09-27. Migrations are
+done; `npm run deploy` from a clean `main` (separately approved), then check `/health` and the next cron's `[game stats cron]`
 log line for the new `changed` counts. After that, the rest of §30 Phase 4.
