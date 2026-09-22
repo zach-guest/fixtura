@@ -1526,12 +1526,27 @@ Time Travel bookmark at export:
 (`wrangler d1 time-travel restore fixtura --bookmark=...`; free plan keeps 7
 days, so this bookmark expires around 2026-09-29).
 
-**Noticed during verification, not yet diagnosed:** production `results` has
-**0 rows** despite finished Week 1 games with picks, and `picks` (22) looks
-like Week 1's 16 plus the two test pools' 6, i.e. no Week 2 picks. Scoring is
-lazy on `/standings` reads, so an empty `results` table may just mean no
-standings read has scored yet, but it does not obviously fit the
-`scoreWeek()` write-overrun story. Check before relying on standings.
+**Empty `results` — diagnosed 2026-09-22, benign.** From `wrangler d1
+insights` (31d/14d/7d/1d windows): the standings query has run 5 times in 31
+days and **0 times in the last 14**, i.e. never since Week 1 finished, and
+scoring is lazy on that read. All 24 historical `INSERT INTO results` belonged
+to disposable pool 4 (seeded with 2025 events) and were removed by a manual
+`DELETE FROM results WHERE pool_id = 4` cleanup. There is no delete of pool 3
+results anywhere. ESPN's Week 1 scoreboard shows all 16 games `post` with a
+winner, so the next Standings read will score Week 1. Week 2 has no picks in
+any pool.
+
+**The 2026-09-21 D1 alerts were not caused by Pick'em scoring.** Same insights
+data: results scoring wrote **48 rows in 31 days**, while ESPN player-stat
+capture wrote ~99.9% of all rows: 288,341 in the last 7 days, 287,981 of them
+`nfl_*` capture tables, led by `INSERT INTO nfl_player_game_stats` (246,258
+rows over 156 runs, ~1,580 rows per run: each changed capture deletes and
+reinserts a whole game's stats). The free tier caps writes at 100k rows/day,
+so game Sundays exceed it. The `scoreWeek()` change (`d762bd9`) is harmless
+and correct but did not address this; the alerts stopping is explained by no
+games since Monday night. **Expect them again on Sunday 2026-09-27** unless the
+capture write pattern changes or the account moves to the $5/mo plan (50M
+rows/month).
 
 **Exact next task:** §30 Phase 4 step 3, apply `0003` to remote D1 (then
 `0004`, then `0005` exactly once), each separately authorized.
