@@ -129,11 +129,16 @@ async function health(env, origin) {
   }
   const configured = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SESSION_SECRET']
     .filter((k) => !env[k]);
+  // A boolean, never the URL. Tests use it to confirm they are running against
+  // deterministic fixtures rather than the live scoreboard; it must be false
+  // in production.
+  const scoreboardOverride = Boolean(env.ESPN_SCOREBOARD_BASE);
   return priv({
     ok: db === 'ok' && configured.length === 0,
     db,
     // Names only — never the values.
     missing_config: configured,
+    scoreboard_override: scoreboardOverride,
     proxy_routes: Object.keys(ROUTES),
   }, { origin, status: db === 'ok' ? 200 : 503 });
 }

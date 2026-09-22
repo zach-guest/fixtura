@@ -42,7 +42,34 @@ print(eval(("d"+e) if e.startswith("[") else e))' 2>/dev/null; }
 qs(){ L="$1" K="$2" python3 -c 'import os,urllib.parse as u;print(u.parse_qs(u.urlparse(os.environ["L"]).query)[os.environ["K"]][0])'; }
 
 if ! curl -sf -o /dev/null "$B/health"; then
-  echo "no worker on $B — start it with: npm run dev"; exit 1
+  echo "no worker on $B — start it with: npm run dev:test"; exit 1
+fi
+
+# The Pick'em suite asserts exact lock states, so it must not read the live
+# scoreboard: those assertions used to pass only while the chosen NFL week had
+# no started games, and broke the moment Week 1 2026 kicked off. Picking a
+# later "future" week only moves the expiry date. The worker therefore has to
+# be started in fixture mode (npm run dev:test), pointed at the deterministic
+# server below.
+FIXTURES=${FIXTURES:-http://127.0.0.1:8788}
+if [ "$(curl -s "$B/health" -H "Origin: $APP" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("scoreboard_override"))')" != "True" ]; then
+  echo "worker on $B is reading the LIVE scoreboard."
+  echo "Pick'em assertions need deterministic fixtures. Restart it with:"
+  echo "    npm run dev:test        # sets ESPN_SCOREBOARD_BASE"
+  exit 1
+fi
+if ! curl -sf -o /dev/null "$FIXTURES/football/nfl/scoreboard?dates=2026&week=1"; then
+  echo "starting the scoreboard fixture server on $FIXTURES"
+  node test/fixtures/scoreboard-server.mjs 8788 >/dev/null 2>&1 &
+  FIXTURE_PID=$!
+  # disown so the shell does not print "Terminated" when the trap kills it —
+  # a stray job-control message after "passed=N failed=0" reads like a failure.
+  disown $FIXTURE_PID 2>/dev/null || true
+  trap 'kill $FIXTURE_PID 2>/dev/null; [ -z "${KEEP:-}" ] && rm -rf "$T"' EXIT
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    curl -sf -o /dev/null "$FIXTURES/football/nfl/scoreboard?dates=2026&week=1" && break
+    sleep 0.3
+  done
 fi
 
 echo "== health =="
@@ -431,10 +458,13 @@ chk "  (B is still listed as a member)" True "$(jq_ $T/av "len(d['members'])==2"
 
 echo "== standings and scoring =="
 # Seed a finished week directly: A picks every winner, B picks every loser.
-python3 - "$OLDPOOL" "$NOW" > $T/seed.sql <<'PY'
+python3 - "$OLDPOOL" "$NOW" "$FIXTURES" > $T/seed.sql <<'PY'
 import sys,json,urllib.request
-pool,now=sys.argv[1],sys.argv[2]
-u="https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2025&seasontype=2&week=1"
+pool,now,base=sys.argv[1],sys.argv[2],sys.argv[3]
+# Read the SAME scoreboard the worker reads. Seeding from live ESPN while
+# the worker served fixtures produced picks whose event ids did not exist
+# in the pool week, so nothing scored and the standings came back 0-0.
+u=f"{base}/football/nfl/scoreboard?dates=2025&seasontype=2&week=1"
 r=urllib.request.Request(u,headers={"User-Agent":"Fixtura/1.0 (+https://zach-guest.github.io/fixtura/)"})
 d=json.load(urllib.request.urlopen(r))
 out=[]
@@ -546,10 +576,13 @@ echo "== survivor: elimination, seeded against a finished season =="
 old=$(jpost /pools $T/sold POST "$A2" '{"name":"Survivor Last Season","season":2025,"league":"nfl","mode":"survivor"}')
 SOLDPOOL=$(jq_ $T/sold "['pool']['id']")
 jpost /pools/join $T/soldj POST "$B_AUTH" "{\"code\":\"$(jq_ $T/sold "['pool']['join_code']")\"}" >/dev/null
-python3 - "$SOLDPOOL" "$NOW" > $T/sseed.sql <<'PY'
+python3 - "$SOLDPOOL" "$NOW" "$FIXTURES" > $T/sseed.sql <<'PY'
 import sys,json,urllib.request
-pool,now=sys.argv[1],sys.argv[2]
-u="https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2025&seasontype=2&week=1"
+pool,now,base=sys.argv[1],sys.argv[2],sys.argv[3]
+# Read the SAME scoreboard the worker reads. Seeding from live ESPN while
+# the worker served fixtures produced picks whose event ids did not exist
+# in the pool week, so nothing scored and the standings came back 0-0.
+u=f"{base}/football/nfl/scoreboard?dates=2025&seasontype=2&week=1"
 r=urllib.request.Request(u,headers={"User-Agent":"Fixtura/1.0 (+https://zach-guest.github.io/fixtura/)"})
 d=json.load(urllib.request.urlopen(r))
 e=d["events"][0]

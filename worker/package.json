@@ -13,7 +13,9 @@
     "test:stats": "node --test test/game-stats-normalize.test.js test/game-stats-capture.test.js test/game-stats-read.test.js test/game-stats-rank.test.js test/game-stats-rate.test.js test/game-stats-audit.test.js && python3 test/game-stats-schema.test.py && python3 test/game-stats-capture-schema.test.py",
     "dev:stats-test": "wrangler dev --config test/wrangler.game-stats.jsonc --ip 127.0.0.1 --port 8791 --persist-to .wrangler/stats-test",
     "test:stats:d1": "node --test test/game-stats-d1.test.mjs",
-    "audit:stats": "node scripts/audit-nfl-week.mjs"
+    "audit:stats": "node scripts/audit-nfl-week.mjs",
+    "dev:test": "wrangler dev --var ESPN_SCOREBOARD_BASE:http://127.0.0.1:8788",
+    "fixtures": "node test/fixtures/scoreboard-server.mjs"
   },
   "keywords": [],
   "author": "",

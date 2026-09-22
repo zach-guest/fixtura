@@ -113,13 +113,31 @@ async function body(request) {
  * current week is used. That keeps "what week is it" out of this codebase,
  * where it would rot every September.
  */
-async function weekGames(ctx, pool, week) {
+/**
+ * The scoreboard host, overridable for tests only.
+ *
+ * `ESPN_SCOREBOARD_BASE` is unset in production and in `npm run dev`, so the
+ * default below is what actually runs. `npm run dev:test` points it at the
+ * deterministic fixture server in `test/fixtures/`, which is what lets the
+ * Pick'em integration tests assert exact lock states instead of depending on
+ * whatever the real NFL schedule happens to be doing today. Kickoff times,
+ * winners and lock decisions still come from whatever this returns — the
+ * authority is unchanged, only the address is.
+ */
+const DEFAULT_SCOREBOARD_BASE = 'https://site.api.espn.com/apis/site/v2/sports';
+
+export function scoreboardBase(env) {
+  const override = env && env.ESPN_SCOREBOARD_BASE;
+  return typeof override === 'string' && override ? override.replace(/\/+$/, '') : DEFAULT_SCOREBOARD_BASE;
+}
+
+async function weekGames(ctx, pool, week, env) {
   const path = POOL_LEAGUES[pool.league];
   if (!path) throw new ApiError(500, 'pool is on a league this worker cannot read', { league: pool.league });
 
   const qs = new URLSearchParams({ dates: String(pool.season), seasontype: '2' });
   if (week !== 'current') qs.set('week', String(week));
-  const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?${qs}`;
+  const url = `${scoreboardBase(env)}/${path}/scoreboard?${qs}`;
 
   const data = await getJSON(url, SCOREBOARD_TTL, ctx);
   const n = (data.week && data.week.number) || (week === 'current' ? 0 : Number(week));
@@ -276,7 +294,7 @@ async function weekView(env, ctx, user, poolId, weekArg, origin) {
   const week = weekArg === 'current' ? 'current' : Number(weekArg);
   if (week !== 'current' && (!Number.isInteger(week) || week < 1 || week > MAX_WEEK)) throw bad('bad week');
 
-  const { week: weekNo, games } = await weekGames(ctx, pool, week);
+  const { week: weekNo, games } = await weekGames(ctx, pool, week, env);
   const locked = new Set(games.filter(g => g.locked).map(g => g.id));
 
   const { results } = await env.DB.prepare(
@@ -340,7 +358,7 @@ async function submitPicks(request, env, ctx, user, poolId, origin) {
 
   // The authority. Note what is NOT read from the request: kickoff times, which
   // teams are playing, and whether a game has started.
-  const { week: weekNo, games } = await weekGames(ctx, pool, week);
+  const { week: weekNo, games } = await weekGames(ctx, pool, week, env);
   if (weekNo !== week) throw bad('that week is not available for this season', { asked: week, got: weekNo });
   const byId = new Map(games.map(g => [g.id, g]));
 
@@ -484,7 +502,7 @@ async function scoreWeek(env, ctx, pool, week) {
   ).bind(pool.id, week).first();
   if (scored && scored.n >= picked.n) return;      // nothing new could have finished
 
-  const { games } = await weekGames(ctx, pool, week);
+  const { games } = await weekGames(ctx, pool, week, env);
   const done = games.filter(g => g.final);
   if (!done.length) return;
 
