@@ -10,7 +10,7 @@
     "db:schema": "wrangler d1 execute fixtura --remote --file=schema.sql",
     "db:schema:local": "wrangler d1 execute fixtura --local --file=schema.sql",
     "types": "wrangler types",
-    "test:stats": "node --test test/game-stats-normalize.test.js test/game-stats-capture.test.js test/game-stats-read.test.js test/game-stats-rank.test.js test/game-stats-rate.test.js test/game-stats-audit.test.js && python3 test/game-stats-schema.test.py && python3 test/game-stats-capture-schema.test.py",
+    "test:stats": "node --test test/game-stats-normalize.test.js test/game-stats-capture.test.js test/game-stats-read.test.js test/game-stats-rank.test.js test/game-stats-rate.test.js test/game-stats-audit.test.js test/epa-validate.test.js test/epa-store.test.js test/epa-read.test.js && python3 test/game-stats-schema.test.py && python3 test/game-stats-capture-schema.test.py && python3 test/epa-schema.test.py",
     "dev:stats-test": "wrangler dev --config test/wrangler.game-stats.jsonc --ip 127.0.0.1 --port 8791 --persist-to .wrangler/stats-test",
     "test:stats:d1": "node --test test/game-stats-d1.test.mjs",
     "audit:stats": "node scripts/audit-nfl-week.mjs",

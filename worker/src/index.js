@@ -29,12 +29,14 @@ import { handlePools } from './pools.js';
 import { captureLeaderSnapshot, handleTrends } from './trends.js';
 import { captureNFLGameStats } from './game-stats-capture.js';
 import { handleGameStats } from './game-stats-read.js';
+import { handleEpaImport } from './epa-import.js';
+import { handleEpaRead } from './epa-read.js';
 
 /**
  * Path prefixes that are per-user. A request whose first segment is on this
  * list can never reach the proxy lane, whatever else is true.
  */
-const PRIVATE_PREFIXES = new Set(['auth', 'me', 'pools', 'picks']);
+const PRIVATE_PREFIXES = new Set(['auth', 'me', 'pools', 'picks', 'epa']);
 
 /**
  * Public, but answered from here rather than proxied upstream. These are
@@ -45,8 +47,8 @@ const PRIVATE_PREFIXES = new Set(['auth', 'me', 'pools', 'picks']);
 const LOCAL_PUBLIC_PREFIXES = new Set(['health', 'trends', 'stats']);
 
 // Provably disjoint, all three ways. If a future proxy route is ever named
-// `picks`, `trends`, or `stats`, this throws on the first request after deploy rather
-// than quietly caching private data or shadowing a route.
+// `picks`, `trends`, `stats`, or `epa`, this throws on the first request after deploy
+// rather than quietly caching private data or shadowing a route.
 for (const name of Object.keys(ROUTES)) {
   if (PRIVATE_PREFIXES.has(name)) {
     throw new Error(`route "${name}" is both a proxy route and a private prefix`);
@@ -94,12 +96,24 @@ export default {
     try {
       if (head === 'health') return health(env, origin);
       if (head === 'trends') return await handleTrends(request, segments, env, ctx, origin);
-      if (head === 'stats') return await handleGameStats(request, segments, env, ctx, origin);
+      if (head === 'stats') {
+        // Both live under the same public prefix but are different modules:
+        // /stats/:league/epa/... is the EPA tree, everything else is the
+        // retained ESPN player-game reads. Dispatching on segment 2 keeps the
+        // existing routes byte-identical rather than threading a league
+        // parameter through them.
+        if (segments[2] === 'epa') return await handleEpaRead(request, segments, env, ctx, origin);
+        return await handleGameStats(request, segments, env, ctx, origin);
+      }
 
       if (PRIVATE_PREFIXES.has(head)) {
         if (head === 'auth')  return await handleAuth(request, segments, env, ctx, origin);
         if (head === 'me')    return await handleMe(request, segments, env, ctx, origin);
         if (head === 'pools') return await handlePools(request, segments, env, ctx, origin);
+        // Machine-authenticated EPA ingestion. Private because it writes, and
+        // because its bearer token is a deployment secret rather than a user
+        // session — see epa-import.js.
+        if (head === 'epa')   return await handleEpaImport(request, segments, env, ctx, origin);
         // `picks` stays reserved so it can never be mistaken for a proxy route.
         // Everything pick'em-related lives under /pools, since a pick only means
         // anything inside a pool.
@@ -129,6 +143,9 @@ async function health(env, origin) {
   }
   const configured = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SESSION_SECRET']
     .filter((k) => !env[k]);
+  // Reported separately: EPA ingestion being unconfigured does not make the
+  // Worker unhealthy, it just means imports would 503. Names only, never values.
+  const epaConfigured = Boolean(env.EPA_IMPORT_TOKEN);
   // A boolean, never the URL. Tests use it to confirm they are running against
   // deterministic fixtures rather than the live scoreboard; it must be false
   // in production.
@@ -138,6 +155,7 @@ async function health(env, origin) {
     db,
     // Names only — never the values.
     missing_config: configured,
+    epa_import_configured: epaConfigured,
     scoreboard_override: scoreboardOverride,
     proxy_routes: Object.keys(ROUTES),
   }, { origin, status: db === 'ok' ? 200 : 503 });

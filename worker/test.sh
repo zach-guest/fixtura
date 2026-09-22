@@ -256,6 +256,250 @@ chk "live threshold follows represented team games" 14 "$(jq_ $T/gs7b "d['rows']
 chk "under-volume candidates are excluded" 1 "$(jq_ $T/gs7b "d['excluded_candidates']")"
 chk "rate definition identifies its denominator" passingAttempts "$(jq_ $T/gs7b "d['rate']['denominator']['key']")"
 
+echo "== EPA: route separation and the import lane =="
+# The import lane is private and machine-authenticated. .dev.vars supplies
+# EPA_IMPORT_TOKEN locally; without it these expect 503, which is a different
+# answer from 401 on purpose.
+EPA_TOKEN=$(sed -n 's/^EPA_IMPORT_TOKEN[[:space:]]*=[[:space:]]*//p' .dev.vars 2>/dev/null | head -1 | sed 's/^["'"'"']//; s/["'"'"']$//')
+
+curl -s -D $T/e0 -o $T/e0b "$B/health" -H "Origin: $APP"
+chk "health reports epa import config by name only" "$(if [ -n "$EPA_TOKEN" ]; then echo True; else echo False; fi)" "$(jq_ $T/e0b "d['epa_import_configured']")"
+chk "health never echoes the import token" False "$(python3 -c "
+import os
+tok=os.environ.get('EPA_TOKEN','')
+body=open('$T/e0b').read()
+print(bool(tok) and tok in body)" 2>/dev/null || echo False)"
+
+curl -s -D $T/e1 -o /dev/null -X POST "$B/epa/import/nfl" -H "Origin: $APP" -H 'Content-Type: application/json' -d '{}'
+if [ -n "$EPA_TOKEN" ]; then
+  chk "import without a token is 401" 401 "$(code $T/e1)"
+else
+  chk "import without config is 503, not 401" 503 "$(code $T/e1)"
+fi
+chk "import lane is never cached" "no-store, private" "$(hdr $T/e1 cache-control)"
+
+curl -s -D $T/e2 -o /dev/null -X POST "$B/epa/import/nfl" -H "Origin: $APP" \
+  -H "Authorization: Bearer definitely-not-the-token" -H 'Content-Type: application/json' -d '{}'
+if [ -n "$EPA_TOKEN" ]; then chk "a wrong token is refused" 401 "$(code $T/e2)"; else chk "a wrong token is refused" 503 "$(code $T/e2)"; fi
+
+curl -s -D $T/e3 -o /dev/null "$B/epa/import/nfl" -H "Origin: $APP"
+chk "import is POST only" 400 "$(code $T/e3)"
+curl -s -D $T/e4 -o /dev/null -X POST "$B/epa/import/nhl" -H "Origin: $APP" -d '{}'
+chk "unknown import league is 404" 404 "$(code $T/e4)"
+
+if [ -n "$EPA_TOKEN" ]; then
+  echo "== EPA: import, validation, and correction =="
+  $WRANGLER d1 execute fixtura --local --command \
+    "DELETE FROM nfl_epa_plays WHERE event_id='401700001';
+     DELETE FROM nfl_epa_team_games WHERE event_id='401700001';
+     DELETE FROM nfl_epa_player_games WHERE event_id='401700001';
+     DELETE FROM nfl_epa_games WHERE event_id='401700001';
+     DELETE FROM nfl_epa_import_state WHERE event_id='401700001';
+     DELETE FROM cfb_epa_plays WHERE event_id='401700002';
+     DELETE FROM cfb_epa_team_games WHERE event_id='401700002';
+     DELETE FROM cfb_epa_player_games WHERE event_id='401700002';
+     DELETE FROM cfb_epa_games WHERE event_id='401700002';
+     DELETE FROM cfb_epa_import_state WHERE event_id='401700002';" >/dev/null 2>&1
+
+  python3 - > $T/nfl_payload.json <<'PYEOF'
+import json
+play = lambda **o: {**{"play_id":"1","drive":"1","quarter":1,"clock":"15:00","down":1,
+  "yards_to_go":10,"yardline_100":75,"possession_team":"CHI","defense_team":"MIN",
+  "play_type":"pass","description":"a pass","ep_before":1.2,"epa":0.5,"qb_epa":0.5,
+  "success":1,"is_pass":True,"is_rush":False,"is_dropback":True,"is_sack":False,
+  "is_penalty":False,"passer_gsis_id":"00-0039918","rusher_gsis_id":None,
+  "receiver_gsis_id":None}, **o}
+print(json.dumps({"league":"nfl","event_id":"401700001",
+  "nflverse_game_id":"2098_01_MIN_CHI","season":2098,"season_type_espn":2,"week":1,
+  "home_team":"CHI","away_team":"MIN","gameday":"2098-09-07","overtime":False,
+  "predicate_version":1,"source":{"pbp_url":"https://example.invalid/pbp.parquet",
+  "pbp_last_modified":"Wed, 13 Aug 2098 12:26:09 GMT"},
+  "plays":[play(), play(play_id="2",possession_team="MIN",defense_team="CHI",epa=-0.4,
+    qb_epa=-0.4,success=0,passer_gsis_id="00-0039923")],
+  "drives":[{"drive_id":"1","sequence":1,"possession_team":"CHI","start_period":1,
+    "start_clock":"15:00","end_period":1,"end_clock":"12:00","result":"Punt","plays":2,
+    "yards":None,"epa":0.1,"modeled_plays":2,"coverage":"complete"}],
+  "coverage":{"eligible_plays":2,"eligible_drives":1}}))
+PYEOF
+
+  curl -s -D $T/e5 -o $T/e5b -X POST "$B/epa/import/nfl?dryRun=1" -H "Origin: $APP" \
+    -H "Authorization: Bearer $EPA_TOKEN" -H 'Content-Type: application/json' \
+    --data-binary @$T/nfl_payload.json
+  chk "dry run validates" 200 "$(code $T/e5)"
+  chk "dry run does not store" validated "$(jq_ $T/e5b "d['results'][0]['status']")"
+  chk "dry run reports play count" 2 "$(jq_ $T/e5b "d['results'][0]['plays']")"
+
+  curl -s -D $T/e6 -o $T/e6b -X POST "$B/epa/import/nfl" -H "Origin: $APP" \
+    -H "Authorization: Bearer $EPA_TOKEN" -H 'Content-Type: application/json' \
+    --data-binary @$T/nfl_payload.json
+  chk "import status" 200 "$(code $T/e6)"
+  chk "game is inserted" inserted "$(jq_ $T/e6b "d['results'][0]['status']")"
+
+  curl -s -o $T/e7b -X POST "$B/epa/import/nfl" -H "Origin: $APP" \
+    -H "Authorization: Bearer $EPA_TOKEN" -H 'Content-Type: application/json' \
+    --data-binary @$T/nfl_payload.json
+  chk "an identical re-import is unchanged" unchanged "$(jq_ $T/e7b "d['results'][0]['status']")"
+
+  python3 -c "
+import json
+d=json.load(open('$T/nfl_payload.json'))
+d['team_games']=[{'team':'CHI','off_epa':99.0,'off_plays':1,'off_success':1,'off_pass_epa':99.0,
+  'off_dropbacks':1,'off_pass_success':1,'off_rush_epa':0.0,'off_designed_rushes':0,'off_rush_success':0},
+ {'team':'MIN','off_epa':-0.4,'off_plays':1,'off_success':0,'off_pass_epa':-0.4,
+  'off_dropbacks':1,'off_pass_success':0,'off_rush_epa':0.0,'off_designed_rushes':0,'off_rush_success':0}]
+json.dump(d,open('$T/tampered.json','w'))"
+  curl -s -D $T/e8 -o $T/e8b -X POST "$B/epa/import/nfl" -H "Origin: $APP" \
+    -H "Authorization: Bearer $EPA_TOKEN" -H 'Content-Type: application/json' \
+    --data-binary @$T/tampered.json
+  chk "a tampered aggregate is refused" 400 "$(code $T/e8)"
+  chk "the worker says which field disagreed" off_epa "$(jq_ $T/e8b "d['results'][0]['detail']['field']")"
+
+  python3 -c "
+import json
+d=json.load(open('$T/nfl_payload.json'))
+d['league']='cfb'
+json.dump(d,open('$T/wrongleague.json','w'))"
+  curl -s -D $T/e9 -o /dev/null -X POST "$B/epa/import/nfl" -H "Origin: $APP" \
+    -H "Authorization: Bearer $EPA_TOKEN" -H 'Content-Type: application/json' \
+    --data-binary @$T/wrongleague.json
+  chk "a CFB payload cannot enter the NFL route" 400 "$(code $T/e9)"
+
+  # The college completeness gate, over real HTTP.
+  python3 - > $T/cfb_payload.json <<'PYEOF'
+import json
+BIG="401858212104999901"
+plays=[{"play_id":BIG,"play_number":1,"drive_id":"4018582121","period":1,"clock":"15:00",
+ "down":1,"yards_to_go":10,"yards_to_endzone":75,"possession_team_id":"333",
+ "possession_team":"Alabama","defense_team_id":"151","defense_team":"East Carolina",
+ "play_type":"Pass Reception","description":"pass","ep_before":1.1,"epa":0.4,"success":1,
+ "is_pass":True,"is_rush":False,"is_sack":False,"is_penalty_no_play":True,
+ "passer_athlete_id":"5144959","rusher_athlete_id":None,"receiver_athlete_id":None},
+ {"play_id":"401858212104999902","play_number":2,"drive_id":"4018582122","period":1,
+ "clock":"10:00","down":1,"yards_to_go":10,"yards_to_endzone":60,"possession_team_id":"151",
+ "possession_team":"East Carolina","defense_team_id":"333","defense_team":"Alabama",
+ "play_type":"Rush","description":"run","ep_before":1.0,"epa":-0.2,"success":0,
+ "is_pass":False,"is_rush":True,"is_sack":False,"is_penalty_no_play":False,
+ "passer_athlete_id":None,"rusher_athlete_id":"4877259","receiver_athlete_id":None}]
+drives=[{"drive_id":"4018582121","sequence":1,"possession_team_id":"333",
+ "possession_team":"Alabama","start_period":1,"start_clock":"15:00","end_period":1,
+ "end_clock":"11:00","result":"PUNT","plays":1,"yards":19,"epa":0.4,"modeled_plays":1,
+ "coverage":"complete"},
+ {"drive_id":"4018582122","sequence":2,"possession_team_id":"151",
+ "possession_team":"East Carolina","start_period":1,"start_clock":"11:00","end_period":1,
+ "end_clock":"07:00","result":"TD","plays":1,"yards":75,"epa":-0.2,"modeled_plays":1,
+ "coverage":"complete"}]
+print(json.dumps({"league":"cfb","event_id":"401700002","season":2098,"season_type_espn":2,
+ "week":1,"home_team_id":"333","away_team_id":"151","source_says_completed":True,
+ "predicate_version":1,"model":"cfbfastR/SportsDataverse college expected points",
+ "source":{"pbp_url":"https://example.invalid/cfb.parquet",
+ "release_timestamp":{"last_updated":"2098-09-09 11:12:05 EDT"}},"plays":plays,
+ "drives":drives,"coverage":{"eligible_plays":2,"eligible_drives":2}}))
+PYEOF
+  python3 -c "
+import json
+d=json.load(open('$T/cfb_payload.json')); d['source_says_completed']=False
+json.dump(d,open('$T/cfb_incomplete.json','w'))"
+  curl -s -D $T/e10 -o $T/e10b -X POST "$B/epa/import/cfb" -H "Origin: $APP" \
+    -H "Authorization: Bearer $EPA_TOKEN" -H 'Content-Type: application/json' \
+    --data-binary @$T/cfb_incomplete.json
+  chk "a mid-game CFB capture is refused" 400 "$(code $T/e10)"
+  chk "the refusal names the completeness gate" True "$(jq_ $T/e10b "'does not mark completed' in d['results'][0]['error']")"
+
+  curl -s -o $T/e11b -X POST "$B/epa/import/cfb" -H "Origin: $APP" \
+    -H "Authorization: Bearer $EPA_TOKEN" -H 'Content-Type: application/json' \
+    --data-binary @$T/cfb_payload.json
+  chk "a completed CFB game imports" inserted "$(jq_ $T/e11b "d['results'][0]['status']")"
+
+  echo "== EPA: public reads =="
+  curl -s -D $T/r1 -o $T/r1b "$B/stats/nfl/epa/games/401700001" -H "Origin: $APP"
+  chk "game read status" 200 "$(code $T/r1)"
+  chk "game read is public and cacheable" "public, max-age=300" "$(hdr $T/r1 cache-control)"
+  chk "model is named" True "$(jq_ $T/r1b "'nflfastR' in d['model']")"
+  chk "defense sign convention is stated" True "$(jq_ $T/r1b "'higher is better' in d['defenseSignConvention']")"
+  chk "teams come back away then home" "['away', 'home']" "$(jq_ $T/r1b "list(t['homeAway'] for t in d['teams'])")"
+  chk "rates carry their numerator and denominator" 1 "$(jq_ $T/r1b "d['teams'][0]['offense']['epaPerPlay']['denominator']")"
+  chk "pass splits use their own denominator" 1 "$(jq_ $T/r1b "d['teams'][0]['offense']['passEpaPerDropback']['denominator']")"
+  chk "drives come back in sequence" "[1]" "$(jq_ $T/r1b "list(x['sequence'] for x in d['drives'])")"
+  chk "impact plays carry clock and driveId" True "$(jq_ $T/r1b "all(p['clock'] and p['driveId'] for p in d['impactPlays'])")"
+  chk "NFL drive yards are never inferred" True "$(jq_ $T/r1b "all(x['yards'] is None for x in d['drives'])")"
+  chk "coverage reports modeled and eligible plays" "2 2" "$(jq_ $T/r1b "str(d['coverage']['modeledPlays'])+' '+str(d['coverage']['eligiblePlays'])")"
+  chk "coverage reports drive counts" True "$(jq_ $T/r1b "'eligibleDrives' in d['coverage'] and 'completeDrives' in d['coverage']")"
+  chk "provenance is complete" True "$(jq_ $T/r1b "all(k in d['provenance'] for k in ('model','modelVersion','source','sourceReleasedAt','importedAt','parserVersion','responseVersion'))")"
+  chk "game status is explicit" complete "$(jq_ $T/r1b "d['status']")"
+
+  curl -s -D $T/r2 -o $T/r2b "$B/stats/cfb/epa/games/401700002" -H "Origin: $APP"
+  chk "cfb game read status" 200 "$(code $T/r2)"
+  chk "cfb names its own model, not nflverse" True "$(jq_ $T/r2b "'cfbfastR' in d['model']")"
+  chk "a big play id survives as a string" 401858212104999901 "$(jq_ $T/r2b "int(d['impactPlays'][0]['playId'])")"
+  chk "CFB drive yards are real provider values" True "$(jq_ $T/r2b "any(x['yards'] is not None for x in d['drives'])")"
+
+  curl -s -o $T/r3b "$B/stats/nfl/epa/teams?season=2098" -H "Origin: $APP"
+  chk "team season totals" 2 "$(jq_ $T/r3b "len(d['teams'])")"
+  chk "team rate is recomputed from totals" 0.5 "$(jq_ $T/r3b "d['teams'][0]['offense']['epaPerPlay']['value']")"
+  chk "ranking direction is stated" "desc higher" "$(jq_ $T/r3b "d['ranking']['direction']+' '+d['ranking']['better']")"
+  curl -s -o $T/r3c "$B/stats/nfl/epa/teams?season=2098&side=defense&metric=success_rate" -H "Origin: $APP"
+  chk "defensive success rate ranks ascending" "asc lower" "$(jq_ $T/r3c "d['ranking']['direction']+' '+d['ranking']['better']")"
+  curl -s -o $T/r4b "$B/stats/nfl/epa/players?season=2098&role=qb" -H "Origin: $APP"
+  chk "qb role filter works" qb "$(jq_ $T/r4b "d['players'][0]['role']")"
+  chk "qualification is labelled as ours" True "$(jq_ $T/r4b "'Fixtura display threshold' in d['qualificationNote']")"
+  curl -s -D $T/r5 -o /dev/null "$B/stats/nfl/epa/players?season=2098&role=passer" -H "Origin: $APP"
+  chk "a CFB role is rejected on the NFL route" 400 "$(code $T/r5)"
+  curl -s -D $T/r6 -o /dev/null "$B/stats/cfb/epa/players?season=2098&role=qb" -H "Origin: $APP"
+  chk "an NFL role is rejected on the CFB route" 400 "$(code $T/r6)"
+
+  curl -s -o $T/r7b "$B/stats/cfb/epa/coverage?season=2098" -H "Origin: $APP"
+  chk "coverage counts imported games" 1 "$(jq_ $T/r7b "d['totals']['importedGames']")"
+  chk "coverage does not claim a complete schedule" True "$(jq_ $T/r7b "'does not establish a complete schedule' in d['coverageScope']")"
+  chk "cfb coverage explains truncated captures" True "$(jq_ $T/r7b "'stopped mid-game' in d['truncationNote']")"
+
+  curl -s -D $T/r8 -o /dev/null "$B/stats/nfl/epa/teams?season=2098&bogus=1" -H "Origin: $APP"
+  chk "unknown query parameters are refused" 400 "$(code $T/r8)"
+  curl -s -D $T/r9 -o /dev/null "$B/stats/nfl/epa/games/not-an-id" -H "Origin: $APP"
+  chk "a non-numeric event id is refused" 400 "$(code $T/r9)"
+  curl -s -D $T/r10 -o /dev/null -X POST "$B/stats/nfl/epa/teams?season=2098" -H "Origin: $APP"
+  chk "epa reads are GET only" 400 "$(code $T/r10)"
+  curl -s -D $T/r11 -o /dev/null "$B/stats/nhl/epa/coverage?season=2098" -H "Origin: $APP"
+  chk "unknown epa league is 404" 404 "$(code $T/r11)"
+
+  echo "== EPA: the read lane leaks nothing private =="
+  curl -s -o $T/r12b "$B/stats/nfl/epa/games/401700001" -H "Origin: $APP"
+  # Exact key names, not substrings: "possession" contains "session", and a
+  # substring grep flags that as a leak when nothing is leaking.
+  cat > $T/leakcheck.py <<'PYEOF'
+import json, re, sys
+BAD = {'session', 'session_id', 'token', 'access_token', 'bearer', 'email', 'user_id',
+       'user', 'google_sub', 'sub', 'picture', 'join_code', 'selection_id'}
+def keys(o):
+    if isinstance(o, dict):
+        for k, v in o.items():
+            yield k.lower()
+            yield from keys(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from keys(v)
+body = open(sys.argv[1]).read()
+doc = json.loads(body)
+leaked = sorted(BAD & set(keys(doc)))
+tables = re.findall(r'\b(users|sessions|settings|pools|pool_members|picks)\b', body)
+print('LEAK:' + ','.join(leaked) if leaked else ('TABLE:' + tables[0] if tables else 'clean'))
+PYEOF
+  chk "no session, user or pool data in a public read" clean "$(python3 $T/leakcheck.py $T/r12b)"
+
+  curl -s -D $T/r13 -o /dev/null "$B/stats/nfl/epa/games/401700001" -H "Origin: https://evil.example"
+  chk "an unknown origin gets no allow-origin" "" "$(hdr $T/r13 access-control-allow-origin)"
+
+  echo "== EPA: query plans use the intended indexes =="
+  for q in "EXPLAIN QUERY PLAN SELECT * FROM nfl_epa_plays WHERE event_id='401700001' ORDER BY drive, play_id" \
+           "EXPLAIN QUERY PLAN SELECT * FROM cfb_epa_team_games WHERE team_id='333'" \
+           "EXPLAIN QUERY PLAN SELECT * FROM nfl_epa_player_games WHERE role='qb'"; do
+    $WRANGLER d1 execute fixtura --local --command "$q" > $T/qp 2>&1
+    case "$(tr -d '\n' < $T/qp)" in
+      *"USING INDEX"*|*"USING PRIMARY KEY"*|*"SEARCH"*) chk "plan uses an index" ok ok;;
+      *) chk "plan uses an index" ok "SCAN";;
+    esac
+  done
+fi
+
 # --------------------------------------------------------------------------
 # Authenticated. Seeds the local D1 the way a completed Google login would.
 # --------------------------------------------------------------------------

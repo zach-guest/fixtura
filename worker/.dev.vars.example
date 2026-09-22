@@ -3,3 +3,10 @@
 GOOGLE_CLIENT_ID = "xxxxxxxx.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET = "GOCSPX-xxxxxxxx"
 SESSION_SECRET = "a long random string, e.g. openssl rand -base64 48"
+# Machine credential for the EPA import routes (POST /epa/import/nfl|cfb).
+# Deliberately NOT a user session and not reused from anything above: it
+# authorizes those two routes and nothing else. In production set it with
+# `npx wrangler secret put EPA_IMPORT_TOKEN` and give the same value to the
+# ingestion workflow. Unset, the import routes answer 503 (not 401) and the
+# rest of the Worker is unaffected.
+EPA_IMPORT_TOKEN = "a long random string, e.g. openssl rand -base64 48"
