@@ -293,8 +293,15 @@ silent. Two guards in `staleAgainst()` are load-bearing: with no `Last-Modified`
 header `document.lastModified` defaults to *now*, which must not read as permanently
 stale, and second-resolution timestamps need a small skew allowance.
 
-A service worker would be the textbook fix and is deliberately not used: it needs a
-second same-origin file and would break the single-file constraint.
+The banner's **Reload** goes through `reloadFresh()`, which refetches every
+same-origin script and stylesheet the page loaded with `cache:'reload'` before
+reloading. A plain `location.reload()` revalidates the page but can serve the
+modules from cache for up to ten minutes, so Reload could come back up on the old
+JavaScript (or a mix of two builds, which fails at import time).
+
+A service worker would be the textbook fix and is deliberately not used: it would
+put a second, persistent cache between every deploy and every client, which is
+the very staleness problem this section exists to fight.
 
 ## Architecture
 
@@ -422,6 +429,13 @@ re-render by assigning `innerHTML` and re-wiring handlers.
   - The session token arrives in the URL *fragment* from the OAuth callback and is
     stripped with `history.replaceState` immediately, so it never lingers in the
     address bar to be copied into a message.
+  - **A token is accepted only from a sign-in this browser started.** `signIn()`
+    leaves a one-time nonce in `sessionStorage`, the Worker carries it through
+    the signed OAuth state and returns it as `fixtura_nonce`, and `initAuth()`
+    ignores a token whose nonce doesn't match. Without it, anyone could send a
+    link carrying their own token and silently sign the recipient into the
+    sender's account (login CSRF). Deploy the Worker before a frontend that
+    depends on a new callback field, or sign-in breaks in between.
   - `initAuth()` runs **after** the first paint, deliberately: nothing the app draws
     should wait on a round trip to our Worker.
   - A **401 signs you out; any other failure does not.** Being unable to reach the
@@ -442,7 +456,8 @@ re-render by assigning `innerHTML` and re-wiring handlers.
     token in `localStorage`, attached by `api()`, sidesteps that entirely.
 - **Refresh** — clock every 30s; one 60s timer for everything else. The ticker
   refreshes on **every** view, because it sits above the tab row and is always on
-  screen; scores and golf refresh only when their view is the open one. Keep the
+  screen; scores, the NFL dashboard and golf refresh only when their view is the
+  open one. Keep the
   ticker call outside the per-view branches — it lived inside the scores branch for
   a while, which left a bar labelled LIVE frozen at whatever the scores were when
   the app was opened.
@@ -591,8 +606,12 @@ a rule enforced in the UI is not a rule:**
 
 Both are covered by tests that would fail loudly if either regressed.
 
-Scoring is **lazy, on read** of `/standings`: any final game with no `results`
-row gets one, then the tally runs. No cron trigger, nothing running when nobody
+Scoring is **lazy, on read** of `/standings`: any final game someone in the pool
+picked that has no `results` row (or whose winner changed) gets one, then the
+tally runs. Only picked games are scored — counting all of a week's results
+against the picked games once let unpicked games fill the quota and leave a
+picked Monday-night game unscored. A push is a *scored* game with no winner, not
+any pick without one. No cron trigger, nothing running when nobody
 is looking. `results` is deliberately separate from `picks`, so re-scoring a week
 is a delete-and-reinsert that never touches what anyone actually picked.
 
@@ -611,8 +630,10 @@ so the User-Agent (hard-won detail 18) and the edge caching are not duplicated.
 
 ```bash
 cd worker
-npm run dev          # local, with a local D1 copy
-./test.sh            # 115 assertions against it — run this after any change
+npm run dev:test     # local, local D1, scoreboard pointed at test/fixtures
+./test.sh            # the integration suite — run this after any change;
+                     # it refuses to run against a worker on the live scoreboard
+npm run test:stats   # unit tests (no worker needed)
 KEEP=1 ./test.sh     # ... and leave the responses on disk when one fails
 npm run deploy
 npm run db:schema    # apply schema.sql to the remote D1
@@ -626,9 +647,9 @@ reachable and which secrets are still unset, **by name only**.
 > deploy` ships whatever is in the working directory, with no notion of
 > branches or commits. This has bitten twice: the 2026-09-07 snapshot cron lived
 > only on a branch, and the 2026-09-22 Pick'em `scoreWeek()` fix was deployed
-> from an uncommitted tree (both since merged to `main`). Note `main` now also
-> carries the EPA routes, which need migrations 0003–0005 applied to remote D1
-> **before** the next Worker deploy — see `HANDOFF-REDESIGN.md` §30 and §32.
+> from an uncommitted tree (both since merged to `main`). EPA migrations
+> 0003–0005 are applied to remote D1 (2026-09-22), so remote schema matches `main`;
+> a future migration must again be applied **before** the deploy that needs it.
 
 The account's workers.dev subdomain is `fixturaapp`, set once at the account
 level, so every Worker deployed from this account is
@@ -746,8 +767,8 @@ Each was a real bug found in testing. All are non-obvious and easy to reintroduc
    padding *inside* items, not flex `gap`, or the wrap hitches. Skip repaints
    when content is unchanged so the animation doesn't restart.
 
-7. **Auto-refresh.** Scores view only, only when no modal is open, and it reloads
-   only the game list. The user specifically complained about being yanked out of
+7. **Auto-refresh.** Only the open view (scores, NFL dashboard or golf), only when
+   no modal is open, and it reloads only that view's data. The user specifically complained about being yanked out of
    a player profile.
 
 8. **Venue images.** Wikipedia images are filtered by `BAD_IMG` plus a ≥600px

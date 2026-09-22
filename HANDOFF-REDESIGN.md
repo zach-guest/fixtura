@@ -1601,6 +1601,44 @@ only in `last_seen_at`, from a cron run in between); `/me` and `/pools` 401
 /epa/import/nfl` without a token 503; an off-list Origin gets no CORS header.
 The first post-deploy cron (15:30:25 CDT) had no games due and wrote nothing.
 
+### Code review fixes — 2026-09-22 (committed, NOT deployed or pushed)
+
+A whole-repo review found nine issues; all are fixed in commits `0557b93`..
+`da36ae5` plus this docs commit:
+
+- **Pick'em scoring** (`0557b93`): `scoreWeek()` counted all of a week's
+  results against the picked-game count, so unpicked finals could leave a
+  picked game unscored forever; standings counted every unscored pick (and a
+  pick-less member) as a push. New `test.sh` pool: all 4 checks fail on the old
+  code.
+- **EPA store** (`0651cbb`): row-level diffs instead of delete-and-reinsert
+  (same write-volume problem as the stat capture), with a stored-hash guard and
+  re-read; stale/superseded imports no longer overwrite import state.
+- **Ingest workflow** (`910f023`): exit 3 was unreachable under `bash -e`.
+- **Login CSRF** (`45a9cfc`): sign-in nonce in sessionStorage → signed state →
+  `fixtura_nonce` → checked by `initAuth()`.
+- **Odds route removed** (`55bb3b3`): a public keyed route spends a paid key for
+  anyone; never used, key never set.
+- **Update banner Reload** (`da36ae5`): refetches modules/CSS with
+  `cache:'reload'` first.
+- **CLAUDE.md**: test recipe (`npm run dev:test`), refresh/auto-refresh text,
+  the service-worker rationale, scoring and sign-in notes, the deploy warning.
+
+Validation: `test:stats` 94/94, `test:stats:d1` 2/2, `test.sh` 249/249 (fixture
+mode); browser check of the frontend at localhost:8123 (forged token ignored,
+matching nonce accepted and consumed, all tabs load, no module errors).
+
+**Deploy order matters:** the new frontend refuses a token without
+`fixtura_nonce`, and only the new Worker returns one. Deploy the Worker
+(`npm run deploy` from clean `main`) **before** `git push`, or sign-in fails
+for anyone on the new frontend until the Worker catches up. The Worker change is
+backward compatible with the current frontend.
+
+Unverified: the first post-deploy capture run's `changed` counts. The
+`wrangler tail` left running through 16:00 CDT captured only a fetch event, not
+the scheduled run; check Workers Logs in the dashboard, or D1
+`nfl_game_capture_state.last_attempt_at`, instead.
+
 **Exact next task:** confirm the first cron run that rechecks a game logs
 `changed` counts in the low single digits (Workers Logs is enabled), then watch
 Sunday 2026-09-27's D1 rows-written stay under 100k. After that, the rest of
