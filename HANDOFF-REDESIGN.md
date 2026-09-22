@@ -1565,6 +1565,15 @@ Validation: `test:stats` 91/91, `test:stats:d1` 2/2 (new test proves a
 diffed correction ends byte-identical to a from-scratch write, and fails if
 deletes are disabled), `test.sh` 244/244.
 
+**Migration 0003 applied to remote D1 (2026-09-22).** Pre-apply Time Travel
+bookmark `000005ac-00000000-000050ee-723160e897eebd5c48317d97d4d0da18`.
+`wrangler d1 execute fixtura --remote --file=migrations/0003_nfl_epa.sql`,
+22 rows written. Verified: all 5 `nfl_epa_*` tables and 6 named indexes exist,
+matching a local apply of the same file; users 2, picks 22, pools 3,
+stat_snapshots 194, nfl_player_game_stats 16,654 unchanged; `/health` ok. The
+deployed Worker does not reference these tables yet. Remaining before the
+deploy: `0004`, then `0005` exactly once.
+
 **Exact next task:** deploy the Worker before Sunday 2026-09-27. Agreed
 order: apply EPA migrations `0003`, `0004`, `0005` to remote D1 (backup
 above is verified), each separately approved, then `npm run deploy` from a
