@@ -1548,5 +1548,25 @@ games since Monday night. **Expect them again on Sunday 2026-09-27** unless the
 capture write pattern changes or the account moves to the $5/mo plan (50M
 rows/month).
 
-**Exact next task:** §30 Phase 4 step 3, apply `0003` to remote D1 (then
-`0004`, then `0005` exactly once), each separately authorized.
+**Capture write fix built, committed, NOT deployed (2026-09-22).** Zach
+declined the $5/mo plan for now, so the capture write volume has to fall
+below 100k/day before Sunday 2026-09-27. Root cause, now measured: ESPN
+revises **adjusted QBR** on finished games for days without moving
+`meta.lastUpdatedAt`; each revision changed the content hash and the store
+deleted and reinserted the whole game. A read-only diff of all 32 stored
+production games against fresh ESPN: 29 unchanged (diff empty, which also
+proves the new comparison matches D1's stored values), 3 changed only in
+adjQBR, 1–3 cells each. `game-stats-store.js` now writes only changed rows,
+guarded by an optimistic check on the stored hash with re-read-and-retry.
+`game-stats-capture.js` backs off games still partial 12h after kickoff to the
+6h/24h schedule and logs changed-row counts per run. Estimated Sunday cost is
+dominated by first captures, ~16 games × ~1,800 row writes ≈ 30k.
+Validation: `test:stats` 91/91, `test:stats:d1` 2/2 (new test proves a
+diffed correction ends byte-identical to a from-scratch write, and fails if
+deletes are disabled), `test.sh` 244/244.
+
+**Exact next task:** deploy the Worker before Sunday 2026-09-27. Agreed
+order: apply EPA migrations `0003`, `0004`, `0005` to remote D1 (backup
+above is verified), each separately approved, then `npm run deploy` from a
+clean `main`, then check `/health` and the next cron's `[game stats cron]`
+log line for the new `changed` counts. After that, the rest of §30 Phase 4.
