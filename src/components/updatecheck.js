@@ -32,11 +32,27 @@ async function checkForUpdate(){
   }
 }
 
+/* A plain reload revalidates the page but not necessarily its modules and
+   stylesheet: GitHub Pages gives every file max-age=600 and browsers serve
+   fresh-looking subresources from cache, so "Reload" could come back up on the
+   old JavaScript — or, if some files had expired and others not, a mix of two
+   builds, which fails at import time with a blank page. Refetching every
+   same-origin script and stylesheet this page loaded with cache:'reload'
+   overwrites those cache entries first, so the reload gets one whole build. */
+async function reloadFresh(){
+  try{
+    const urls=[...new Set(performance.getEntriesByType('resource').map(e=>e.name)
+      .filter(u=>u.startsWith(location.origin)&&/\.(js|css)(\?|$)/.test(u)))];
+    await Promise.all(urls.map(u=>fetch(u,{cache:'reload'}).catch(()=>{})));
+  }catch(e){}
+  location.reload();
+}
+
 (function wireUpdate(){
   const b=$('#updBanner');
   if(!b)return;
   const rl=$('#updReload'),x=$('#updDismiss');
-  if(rl)rl.onclick=()=>location.reload();
+  if(rl)rl.onclick=reloadFresh;
   // Dismiss means "not this build". Clearing the baseline instead would let the timestamp
   // check re-raise the banner on the very next tick, since the loaded document is still old.
   if(x)x.onclick=()=>{b.classList.remove('show');S.updateShown=false;S.dismissedTag=S.latestTag;};
