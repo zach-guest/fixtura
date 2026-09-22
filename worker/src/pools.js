@@ -497,16 +497,26 @@ async function scoreWeek(env, ctx, pool, week) {
   ).bind(pool.id, week).first();
   if (!picked || !picked.n) return;
 
-  const scored = await env.DB.prepare(
-    'SELECT COUNT(*) AS n FROM results WHERE pool_id = ? AND week = ?'
-  ).bind(pool.id, week).first();
-  if (scored && scored.n >= picked.n) return;      // nothing new could have finished
+  const { results: existing } = await env.DB.prepare(
+    'SELECT event_id, winner_id FROM results WHERE pool_id = ? AND week = ?'
+  ).bind(pool.id, week).all();
+  if (existing.length >= picked.n) return;      // every picked game already has a result
 
   const { games } = await weekGames(ctx, pool, week, env);
   const done = games.filter(g => g.final);
   if (!done.length) return;
 
-  await env.DB.batch(done.map(g => env.DB.prepare(
+  // Only write games that are newly final or whose winner actually changed. A
+  // D1 upsert still counts as a row write even when nothing changed, and this
+  // function runs on every /standings read — during a live week that's every
+  // pool member checking in throughout the day, so re-upserting settled games
+  // on every call burns the daily rows_written cap for no reason (this is what
+  // tripped the D1 free-tier alerts on 2026-09-21).
+  const scoredById = new Map(existing.map(r => [r.event_id, r.winner_id]));
+  const stale = done.filter(g => !scoredById.has(g.id) || scoredById.get(g.id) !== g.winner_id);
+  if (!stale.length) return;
+
+  await env.DB.batch(stale.map(g => env.DB.prepare(
     `INSERT INTO results (pool_id, event_id, week, winner_id, scored_at)
      VALUES (?, ?, ?, ?, ?)
      ON CONFLICT (pool_id, event_id) DO UPDATE SET winner_id = excluded.winner_id, scored_at = excluded.scored_at`
