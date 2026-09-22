@@ -50,8 +50,8 @@
   //   npx wrangler secret put GOOGLE_CLIENT_SECRET
   //   npx wrangler secret put SESSION_SECRET        # any long random string;
   //                                                 # signs the OAuth state
-  //   npx wrangler secret put ODDS_API_KEY          # only when a keyed
-  //                                                 # provider actually lands
+  //   npx wrangler secret put EPA_IMPORT_TOKEN      # the EPA import routes;
+  //                                                 # same value as the Actions secret
   //
   // `GET /health` reports which of these are still missing, by name only.
   //

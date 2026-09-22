@@ -32,10 +32,15 @@ export const ROUTES = {
   wx:       { host: 'api.open-meteo.com',           prefix: '/v1',                    ttl: 600 },
   geo:      { host: 'geocoding-api.open-meteo.com', prefix: '/v1',                    ttl: 86400 },
   wiki:     { host: 'en.wikipedia.org',             prefix: '/w/api.php',             ttl: 86400, exact: true },
-  odds:     { host: 'api.the-odds-api.com',         prefix: '/v4',                    ttl: 120, key: 'ODDS_API_KEY', keyParam: 'apiKey' },
 };
 // `score` (api.thescore.com) was removed here: it was never CORS-verified and
 // nothing calls it. See DECISIONS.md — re-add it only with a real check.
+// `odds` (api.the-odds-api.com) was removed 2026-09-22 for a sharper reason:
+// this lane is public, so a keyed route spends the paid key for anyone who can
+// curl the Worker (CORS only restrains browsers), and every distinct query
+// string is a cache miss. Nothing called it and the key was never set. A keyed
+// route must come back with its own gate (allow-listed paths/params and a
+// rate limit), not just a `key` entry here.
 
 /** Upstream calls that hang should fail fast rather than burn the worker's time. */
 const UPSTREAM_TIMEOUT_MS = 10_000;
