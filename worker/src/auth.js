@@ -33,6 +33,8 @@ const GOOGLE_ISS   = ['https://accounts.google.com', 'accounts.google.com'];
 const SESSION_TTL   = 30 * 24 * 3600;   // 30 days
 const STATE_TTL     = 10 * 60;          // an unfinished sign-in expires fast
 const TOKEN_BYTES   = 32;
+// The browser's sign-in nonce: see startGoogle(). base64url, as the frontend makes it.
+const NONCE_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
 
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -194,10 +196,21 @@ async function startGoogle(request, env, origin) {
   const url = new URL(request.url);
   const back = safeReturnUrl(url.searchParams.get('return'), ALLOWED_ORIGINS[0] + '/fixtura/');
 
+  // The browser that starts a sign-in sends a random nonce it keeps in its own
+  // sessionStorage; it comes back in the fragment next to the token, and the
+  // frontend refuses a token whose nonce it did not issue. Without that, the
+  // signed state proves the round trip was OURS but not that it was THIS
+  // browser's: anyone could send a pool member a link carrying the sender's
+  // own token and silently sign them into the sender's account (login CSRF).
+  // Optional here only so a cached older frontend can still sign in.
+  const nonce = url.searchParams.get('nonce');
+  if (nonce !== null && !NONCE_PATTERN.test(nonce)) throw bad('malformed sign-in nonce');
+
   const state = await signState(env.SESSION_SECRET, {
     n: crypto.randomUUID(),
     t: now(),
     r: back,
+    ...(nonce ? { c: nonce } : {}),
   });
 
   const auth = new URL(GOOGLE_AUTH);
@@ -264,7 +277,8 @@ async function callbackGoogle(request, env, ctx, origin) {
   // is never sent to a server, so it stays out of access logs and out of the
   // Referer header of whatever the page loads next.
   const back = new URL(state.r);
-  back.hash = `fixtura_token=${encodeURIComponent(token)}&fixtura_expires=${expires}`;
+  back.hash = `fixtura_token=${encodeURIComponent(token)}&fixtura_expires=${expires}`
+    + (typeof state.c === 'string' && NONCE_PATTERN.test(state.c) ? `&fixtura_nonce=${state.c}` : '');
   return redirect(back.toString(), origin);
 }
 

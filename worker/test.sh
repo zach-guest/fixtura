@@ -127,6 +127,13 @@ chk "  redirect_uri tracks the host" "$B/auth/google/callback" "$(qs "$LOC" redi
 STATE="$(qs "$LOC" state)"
 chk "  state present" "yes" "$([ -n "$STATE" ] && echo yes || echo no)"
 
+NONCE=abcdefghijklmnopqrstuv_-12
+curl -s -D $T/o1n -o /dev/null "$B/auth/google/start?return=$APP/fixtura/&nonce=$NONCE" -H "Origin: $APP"
+NSTATE="$(qs "$(hdr $T/o1n location)" state)"
+chk "  the browser's nonce rides in the signed state" "$NONCE" "$(S="$NSTATE" python3 -c 'import os,base64,json;b=os.environ["S"].split(".")[0];b+="="*((4-len(b)%4)%4);print(json.loads(base64.urlsafe_b64decode(b)).get("c"))')"
+curl -s -D $T/o1b -o $T/o1bb "$B/auth/google/start?return=$APP/fixtura/&nonce=bad%20nonce" -H "Origin: $APP"
+chk "  a malformed nonce is refused" 400 "$(code $T/o1b)"
+
 echo "== oauth: the callback rejects what it should =="
 curl -s -D $T/o2 -o $T/o2b "$B/auth/google/callback?code=x&state=${STATE}TAMPER" -H "Origin: $APP"
 chk "unparseable state" 400 "$(code $T/o2)"

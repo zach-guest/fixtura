@@ -25,7 +25,18 @@ async function initAuth(){
     if(h.indexOf('fixtura_token=')>=0){
       const p=new URLSearchParams(h.replace(/^#/,''));
       const t=p.get('fixtura_token');
-      if(t){S.authToken=t;S.authExp=+(p.get('fixtura_expires')||0)||0;saveAuth();}
+      /* Only accept a token from a sign-in THIS browser started. Without this
+         check, anyone could send a link carrying their own token and silently
+         sign the recipient into the sender's account, whose picks and synced
+         settings the recipient would then be using (login CSRF). signIn()
+         leaves a one-time nonce in sessionStorage; the Worker carries it
+         through the signed OAuth state and returns it next to the token. */
+      const expected=takeSignInNonce();
+      if(t&&expected&&p.get('fixtura_nonce')===expected){
+        S.authToken=t;S.authExp=+(p.get('fixtura_expires')||0)||0;saveAuth();
+      }else if(t){
+        console.warn('Ignored a sign-in token this browser did not request.');
+      }
       history.replaceState(null,'',location.pathname+location.search);
     }
   }catch(e){}
@@ -42,10 +53,21 @@ async function initAuth(){
   }
 }
 
+/* sessionStorage, not store(): per tab, survives the same-tab redirect through
+   Google, and deliberately never synced or shared with another tab. */
+const NONCE_KEY='sb-auth-nonce';
+function takeSignInNonce(){
+  try{const n=sessionStorage.getItem(NONCE_KEY);sessionStorage.removeItem(NONCE_KEY);return n;}catch(e){return null;}
+}
+
 function signIn(){
+  const b=crypto.getRandomValues(new Uint8Array(18));
+  const nonce=btoa(String.fromCharCode(...b)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  try{sessionStorage.setItem(NONCE_KEY,nonce);}catch(e){}
   // Only the origin is checked by the Worker's allow-list, but send a clean URL
   // anyway so nobody comes back to a stale query string.
-  location.href=APIBASE+'/auth/google/start?return='+encodeURIComponent(location.origin+location.pathname);
+  location.href=APIBASE+'/auth/google/start?return='+encodeURIComponent(location.origin+location.pathname)+
+    '&nonce='+encodeURIComponent(nonce);
 }
 
 async function signOut(){
