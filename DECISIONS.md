@@ -407,6 +407,30 @@ described. It does not authorize an archived production backfill, schema expansi
 provider change, QBR derivation, or frontend release.
 
 
+## NFL and college-football EPA become explicit planning goals — 2026-09-09
+
+Zach wants Fixtura to track expected points added (EPA) for both NFL and college
+football. The desired granularity and final UI placement are still open, so this
+is a product-direction decision rather than authorization for a provider
+integration, migration, backfill, deployment, or frontend release.
+
+Current research recommends nflverse processed play-by-play for NFL and
+SportsDataverse/cfbfastR's ESPN-derived college pipeline for CFB, both as postgame
+sources. The preferred CFB compiled release currently lists seasons only through
+2025, so a 2026 source/contract spike must select between a newly available season
+asset, enriched per-game final JSON, or locally processed cfbfastR output; no
+silent source fallback is approved. NFL and CFB retain separate model contracts,
+storage, routes, coverage, and rankings.
+
+For both leagues, the proposed storage is hybrid: slim play rows for
+auditability/future analysis plus materialized team-game and selected player-game
+summaries for bounded D1 reads. The first player scope should be quarterbacks and
+designed rushers; receiver and individual defensive attribution remain unresolved.
+ESPN win probability stays the live metric and must not be labeled EPA. The full
+proposed architecture, definitions, phased delivery, release gates, and first
+implementation-ready tasks are in `NFL-IMPLEMENTATION-PLAN.md`.
+
+
 ## First NFL leader surfaces — 2026-09-09
 
 The initial league leaderboard lives inside the existing NFL Scores view. NFL team
@@ -499,3 +523,286 @@ checked against the same failure mode and don't have it — `.teamhero h2` and
 `.phero h2` also render through elements that carry `class="cond"` in
 `teams.js`/`f1.js`/`modal.js`, but a class-plus-element selector (`.teamhero
 h2`) outranks a lone class, so those two were never actually broken by this.
+
+
+## CFB EPA source selected; NFL source confirmed — 2026-09-09
+
+Phase C0 and Phase N0 of `NFL-IMPLEMENTATION-PLAN.md` ran as offline source and
+contract spikes. This settles open item 8 ("select the canonical ongoing CFB
+source after Phase C0") and confirms items 9 and 10. It authorizes no
+migration, route, deploy, backfill, or frontend work.
+
+**The canonical CFB source is the compiled `espn_cfb_pbp` season Parquet** from
+SportsDataverse. The plan's central worry did not survive contact: the 2026
+asset exists and is rebuilt daily (observed `play_by_play_2026.parquet`,
+4.7 MB, updated 2026-09-09T15:11:59Z, with a machine-readable
+`timestamp.json`). Its `game_id` is the ESPN event id and its player id columns
+are ESPN athlete ids, so college needs no crosswalk and no name matching. Its
+scope matches Fixtura's `groups=80` coverage rule exactly — all 97 of its
+week-1 games are inside ESPN's 99 `groups=80` finals, with zero games outside.
+
+Neither documented fallback was selected. The per-game enriched final JSON is
+**not an independent source**: it is the same upstream capture, reconciles
+exactly with the Parquet (identical EPA to four decimals on a complete game),
+and shares its staleness. Running cfbfastR locally could not be evaluated at
+all because R is not installed on this machine, so that path is unexecuted
+rather than rejected. No automatic source switching is implemented.
+
+**The gate is completeness, and it is part of the design rather than a
+validation detail.** The current-season asset contains ESPN finals whose
+capture was taken mid-game and never re-taken: 53 of 99 week-1 finals were
+importable, 44 were present but truncated, and 2 were absent — measured three
+to eleven days after the games. Truncated games carry real EPA for the plays
+they hold, so they read as low-scoring games rather than as errors.
+`status_type_completed` identifies them exactly and is the only safe gate; play
+count is not a proxy, because one truncated game held 179 rows and a complete
+game held 161. Complete, truncated, and missing are three distinct coverage
+states and must stay distinct in storage and in every API response.
+
+This is current-season lag, not a broken source: the 2025 season is 956 of 956
+complete. Whether a truncated game heals in days or only at a season-end
+rebuild is **not yet known**, so the scheduled job's recheck window is not
+fixed at "the previous two weeks" until that is observed.
+
+**NFL stays on nflverse processed play-by-play**, unchanged. Identity is exact
+in both directions: all 272 2025 regular-season games carry a unique `espn` id,
+and all 345 distinct 2025 passers and rushers crosswalk from GSIS to an ESPN
+athlete id with no duplicates and no unmatched ids. The 2026 asset is correctly
+a 404 before kickoff, which is the same "published later than the scoreboard
+claims" shape as hard-won detail 28 and must be a quiet skip.
+
+Two contract points that constrain the schema:
+
+- **All ids are TEXT.** The largest observed CFB play id is
+  401858212104999901, four orders of magnitude past JavaScript's
+  `Number.MAX_SAFE_INTEGER`. As a JSON number it would round silently in both
+  the Worker and the browser.
+- **NFL and CFB keep separate payload shapes and separate predicates.** NFL QB
+  rows aggregate nflverse `qb_epa`; college has no equivalent, so CFB passer
+  rows aggregate play EPA and carry an explicit `epa_basis`. The two are not
+  comparable even in principle. A team's dropback count is also not a
+  quarterback's dropback count, and the payload keeps both.
+
+Measured sizes for the storage decision: one CFB season is ~125,700 qualifying
+plays (~85–95 MB of JSON), one NFL season ~36,100 (~20 MB). Play `description`
+is about 20% of a row, which makes storing it a real schema choice. D1 row
+storage still has to be measured against a local database in Phase 1.
+
+Known untested: the **CFB overtime path**, because the source contains no
+overtime game — the one known week-1 overtime final is among the two games
+missing entirely. It must be verified against a real overtime game before the
+college UI ships.
+
+Full evidence, exact commands, source URLs, and proposed payload shapes are in
+`worker/scripts/epa/README.md`.
+
+
+## EPA spike accepted; storage contract settled — 2026-09-09
+
+Zach reviewed the Phase C0/N0 diff and **accepted the spike**. The tooling in
+`worker/scripts/epa/` stands as the source-and-contract record, and the
+following are now settled rather than open. This authorizes Phase 1 design and
+**local** schema work only — no remote migration, no deploy, no frontend.
+
+1. **Store play `description` from the start.** The initial compact-JSON estimate
+   put it near 20% of a serialized row; the Phase 1 `dbstat` measurement replaced
+   that estimate with 41–47% of the plays table and 30% of total projected EPA
+   storage, or 34.7 MB of the 116 MB 2025+2026 projection. Impact-play
+   explanations in Game Center are a first-class surface rather than a maybe.
+   Dropping it later is a cheap column drop; adding it later means re-downloading
+   and reprocessing a season, which is exactly the re-work the hybrid storage
+   model exists to avoid.
+2. **Backfill 2025 and 2026 only.** Not older history. This bounds the database
+   to roughly two CFB seasons plus two NFL seasons at first import and keeps
+   the free-tier 500 MB ceiling comfortable while real numbers are observed.
+   Older seasons stay available upstream and can be added deliberately later;
+   they are not lost by waiting.
+3. **Keep the 11 source-qualified penalty-no-play records, with their audit
+   flag.** The source assigned them EPA and classified them as scrimmage plays,
+   and the values are consistent with the penalty being enforced (a nullified
+   63-yard touchdown carries EPA −1.10). Fixtura does not overrule the model it
+   is importing. `is_penalty_no_play` is retained per play so the decision is
+   auditable and reversible from stored data rather than requiring a re-import.
+4. **Retain the documented CFB spike behavior.** Three spikes in week 1 qualify
+   because the college schema has no spike flag, where the NFL predicate
+   excludes spikes explicitly. At 0.03% of plays this changes nothing
+   measurable, and the only available "fix" would be pattern-matching
+   description text. It stays a recorded league divergence, not a guess. If it
+   ever needs fixing, the source is asked for a flag.
+5. **NFL and CFB keep separate payload shapes, tables, routes and predicates.**
+   Confirmed, not merged later as a tidy-up. The leagues have different models,
+   different identity spaces and different taxonomies — NFL QB rows aggregate
+   nflverse `qb_epa` while CFB passer rows can only aggregate play EPA, so the
+   numbers are not comparable even in principle.
+
+**Public CFB release stays gated on attribution and data-term review.** The
+SportsDataverse code licences are permissive but the data derives from ESPN;
+the applicable data terms and the exact attribution wording are unresolved.
+Local storage, local routes and local testing may proceed; shipping CFB EPA to
+the live site may not until that review is done. NFL is not blocked by this —
+nflverse data is CC BY 4.0 and the attribution requirement is understood.
+
+**Coverage re-measured the same evening** (~13.5 hours after the first
+measurement): the 2026 asset was byte-identical, same sha256, so week-1
+coverage is unchanged at 53 of 99. The source had not republished in between,
+so this is **not** evidence about whether truncated games heal — that question
+stays open and still needs a measurement taken after an actual upstream
+rebuild.
+
+
+## EPA contract-correction decisions — 2026-09-10
+
+Made while bringing Phase 2 into line with the accepted contract in
+`NFL-IMPLEMENTATION-PLAN.md`. Each is a choice that could reasonably have gone
+another way, so each is recorded rather than left in a diff.
+
+1. **The EPA routes use the contract's camelCase keys**, unlike the older
+   `/stats/nfl/...` routes, which are snake_case. The contract specifies an
+   exact response shape (`eventId`, `homeAway`, `epaPerPlay`, `coverage
+   .eligiblePlays`, `provenance.responseVersion`) and the frontend slice was
+   designed against it. The inconsistency is real but confined to the EPA tree,
+   and matching the spec beats matching the neighbours.
+
+2. **NFL drive yards are null, permanently, not "pending".** nflverse
+   publishes no drive net-yards field; it has `drive_start_yard_line` /
+   `drive_end_yard_line` as text (`"MIN 25"`). Subtracting those is a
+   field-position inference the contract forbids, and it would be wrong on any
+   drive containing a penalty or a change of possession. The API returns null
+   and the response carries a warning explaining why. CFB has a real
+   `drive.yards` and uses it.
+
+3. **Defensive success rate ranks ascending; every other EPA metric ranks
+   descending.** Defensive EPA is stored already negated, so higher is better
+   and descending is right. Defensive success rate is *not* negated — it is the
+   share of opponent plays that succeeded — so lower is better. Sorting it
+   descending would rank the worst defence first, which is the kind of error
+   nobody notices for a season. The chosen `direction` and `better` are
+   returned in the response rather than left implicit.
+
+4. **A team with no value for the chosen metric gets `rank: null` and sorts
+   last**, in both directions. Treating a missing rate as zero would make an
+   unplayed team either the best defence or the worst offence.
+
+5. **`schema.sql` is the repeat-safe canonical schema; `0005` is the one-time
+   migration. These are different artifacts with different properties, and
+   conflating them is what made the first version of this wrong.**
+
+   - **`schema.sql`** describes the final state of a database created from
+     nothing. Every statement is `CREATE ... IF NOT EXISTS`, including the
+     drive tables, and the columns `0005` adds are written inline at the end of
+     their tables. Applying it twice is a no-op, so `npm run db:schema:local`
+     stays safe to re-run.
+   - **`migrations/0005_epa_drives_and_coverage.sql`** exists only for a
+     database that already carries `0003`/`0004`. It uses
+     `ALTER TABLE ... ADD COLUMN`, which SQLite cannot express conditionally,
+     so it is **not** repeat-safe and must be applied exactly once per
+     database. **Migration tracking is what prevents a second application** —
+     the failure on a re-run is a backstop, not the mechanism.
+
+   The inline columns sit after the last column and before any table
+   constraint, which is where `ALTER TABLE` places them, so both routes produce
+   byte-identical table definitions. A test proves all four properties:
+   `schema.sql` applies twice; `0003`+`0004`+`0005`-once matches fresh
+   `schema.sql` at pragma level across all 24 tables; account, pool, pick,
+   snapshot and EPA rows survive `0005` with the new columns NULL; and `0005`
+   run twice still fails on a duplicate column.
+
+   This matters because of hard-won detail 26: `CREATE TABLE IF NOT EXISTS`
+   silently does *not* add a column to a table that already exists, so a
+   canonical schema alone can never migrate an existing database, and a
+   migration alone is a poor description of the final state. Both are needed.
+
+6. **New columns are nullable with no default.** A `DEFAULT 0` on
+   `def_pass_success_allowed` would assert that pre-existing rows had zero
+   split successes, which is a claim about data nobody measured. Null means
+   unknown; the import path always writes a real value.
+
+7. **The Pick'em integration tests read deterministic fixtures, not the live
+   scoreboard.** `ESPN_SCOREBOARD_BASE` overrides the scoreboard host and is
+   unset in production and in `npm run dev`; `npm run dev:test` points it at
+   `test/fixtures/scoreboard-server.mjs`. The suite asserts exact lock states
+   ("none locked yet", "every game reads as locked"), which made it a function
+   of the calendar: it passed only while the chosen NFL week had no started
+   games and began failing the moment Week 1 2026 kicked off. Choosing a later
+   "future" week only moves the expiry date, so the date dependency was removed
+   instead. `/health` reports `scoreboard_override` as a boolean so a test can
+   refuse to run against live data by accident. **The Worker remains the
+   authority on kickoff, eligibility and results — only the address it reads
+   changes.**
+
+8. **Storage projection updated.** Drive rows add about 9 MB across the
+   approved 2025+2026 backfill: **125.5 MB** total, up from 116.1 MB, still
+   about 25% of the 500 MB free tier. Measured, not estimated.
+
+
+## EPA Phase 3 ingestion decisions — 2026-09-10
+
+Made while building the scheduled pipeline. The first two are data findings
+that changed the contract; the rest are operating choices.
+
+1. **Drive coverage is measured against what the model was in scope to score,
+   not against the provider's play count.** Measured on nflverse 2025:
+   `drive_play_count` **excludes accepted-penalty plays**, while the qualifying
+   predicate deliberately keeps them, so our modeled count exceeds the
+   provider's on **18.1% of drives** (1,041 of 5,745). The first version
+   rejected exactly that shape and refused every real NFL week; a
+   "complete means modeled == provider" rule would have marked a fifth of the
+   league partial for no real reason. The two counts measure different things,
+   both are stored, and neither substitutes for the other. A drive is
+   `complete` when every play in scope for the model actually scored.
+
+2. **Provider sentinel values become null, because that is what they mean.**
+   The college source writes `0` where a field does not apply — 5 qualifying
+   plays carry `down = 0` and 20 drives carry `end period = 0` — and uses
+   **negative athlete ids** for unidentified participants (5 qualifying plays
+   in 2026 week 1). Zero is not a real down, and a negative id is not an ESPN
+   athlete id and can never link to a player. Both become null. The play and
+   its EPA are kept; only the attribution is absent, which is the honest
+   reading. Storing `0` would render as "0th down"; storing a negative id would
+   create a player row that can never resolve.
+
+3. **The CFB truncated-game recheck window stays unresolved and configurable.**
+   `--recheck-weeks` is unset by default, which means a season run revisits
+   *every* week that still has an incomplete game — bounded by the season, and
+   the conservative choice while the upstream healing behaviour is unmeasured
+   (handoff §26). A fixed "previous two weeks" would silently stop retrying a
+   game that heals on day twelve. Every report records which policy was used.
+
+4. **The import token is read from the environment, never a flag**, so it
+   cannot land in a shell history or a process listing. With it unset the
+   runner refuses to upload and exits 2, rather than silently doing nothing.
+
+5. **A 4xx is never retried; 429 and 5xx and network failures are, four times
+   with exponential backoff.** A rejected payload is a contract failure and
+   repeating it helps nobody. A 207 is a partial success: reported per game,
+   not retried.
+
+6. **Batches are bounded by count *and* bytes** (8 games / 2 MB against the
+   Worker's 40 / 4 MB limits). A college game is roughly 100 KB, so 40 would
+   sit on the body limit and one unusually long game could tip a batch over it.
+
+7. **Exit code 3 means "nothing to ingest" and the workflow treats it as
+   success.** An unpublished season asset before kickoff is the normal state of
+   the world and must not page anyone — the same reasoning as hard-won detail
+   28.
+
+8. **The workflow is gated off by a repository variable
+   (`EPA_INGEST_ENABLED`).** The file can exist in the repository without
+   starting to write to production the moment it is pushed. Manual runs default
+   to `dry_run: true`. NFL and CFB are independent jobs with no `needs:`
+   between them: different upstreams, different publication windows, different
+   failure modes, and a stale college source must not stop the NFL import.
+
+## Fantasy integration decisions — 2026-09-10
+
+1. **ESPN uses a manual roster-and-rules import unless ESPN later provides an
+   approved integration path.** Fixtura will not request or store `espn_s2`,
+   `SWID`, or other ESPN browser-session credentials, and will not ship against
+   undocumented ESPN fantasy endpoints. The manual import is a versioned CSV
+   roster plus a guided rules form. It is always labeled `Manual import` with an
+   as-of date. Fixtura may keep live NFL game, player-stat and EPA enrichment
+   current, but it must not represent ESPN lineups, transactions, matchup scores
+   or official fantasy points as current between imports. A replacement import
+   is validated and applied atomically; missing fantasy values remain absent,
+   never zero. The implementation sequence and contract are in
+   `FANTASY-INTEGRATION-PLAN.md`.

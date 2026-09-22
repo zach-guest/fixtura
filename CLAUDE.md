@@ -16,6 +16,33 @@ status plus newest dated sections of `HANDOFF-REDESIGN.md` before continuing a
 redesign, stats, account, or release task. Later dated entries supersede older
 plans and historical status.
 
+### Claude Code model and delegation policy
+
+Use the current `opus` alias as the lead for architecture, ambiguous data-source
+work, schema decisions, integration, and final review. The first NFL/CFB EPA task
+is a source-and-contract investigation, so start that task on `opus` with high
+effort. If Opus is unavailable, report the actual model in use rather than silently
+claiming an Opus review.
+
+Use the current `sonnet` alias for normal implementation after the lead has made
+the architecture and contract explicit. Give a Sonnet subagent bounded file
+ownership, exact behavior, constraints, edge cases, and validation commands. Use
+the current `haiku` alias for simple, mechanical work such as targeted searches,
+file inventories, formatting, repetitive edits, and deterministic checks whose
+results the lead will review.
+
+Do not delegate automatically. Work directly when the delegation prompt and
+context would cost more than the task. Run at most two subagents concurrently,
+give concurrent agents disjoint ownership, and do not ask subagents to create more
+subagents. The Opus lead remains responsible for decisions, reviewing every
+delegate's output and diff, resolving conflicts, running integration validation,
+and updating the handoff.
+
+Pass the desired model explicitly when spawning a subagent; do not assume the
+built-in Explore or general-purpose agent will be cheaper than the main session.
+If a requested model is unavailable, say so and complete the work directly rather
+than silently substituting another model.
+
 ## Cross-tool continuity protocol
 
 This repository may move between Claude Code and Codex. Repository state is the
@@ -595,16 +622,17 @@ curl https://fixtura-api.fixturaapp.workers.dev/health
 `/health` is the first thing to check after any deploy: it reports whether D1 is
 reachable and which secrets are still unset, **by name only**.
 
-> ⚠️ **Deployed-from-a-branch hazard, live as of 2026-09-07.** `wrangler deploy`
+> ⚠️ **Deployed-from-a-branch hazard, live as of 2026-09-22.** `wrangler deploy`
 > ships whatever is in the working directory, with no notion of branches. The
-> snapshot cron (`src/trends.js`, the `stat_snapshots` table, the `/trends`
-> route) is **deployed and running in production** but lives only on the
-> `redesign-nfl-dashboards` branch — it is *not* on `main`. Running
-> `npm run deploy` from `main` would therefore silently **revert the production
-> worker**, stopping the weekly capture and 404ing `/trends`, with no error
-> anywhere. The `stat_snapshots` rows would survive, but the weeks missed while
-> it was reverted are gone for good (they cannot be backfilled). Either merge
-> the branch or deploy only from it until merged.
+> Pick'em write-reduction fix in `scoreWeek()` (`src/pools.js`) was deployed on
+> 2026-09-22 (version `81efe37c`) from an uncommitted tree; it is now committed
+> on the `epa-pipeline` branch but is **not on `main`**. Running
+> `npm run deploy` from `main` would silently revert it and bring back the D1
+> free-tier `rows_written` overrun. Merge `epa-pipeline` or deploy only from it.
+> (The 2026-09-07 hazard about `redesign-nfl-dashboards` is resolved: that
+> branch is merged.) Deploying `epa-pipeline` as-is also ships the EPA routes,
+> which need migrations 0003–0005 applied to remote D1 first — see
+> `HANDOFF-REDESIGN.md` §30 and §32.
 
 The account's workers.dev subdomain is `fixturaapp`, set once at the account
 level, so every Worker deployed from this account is

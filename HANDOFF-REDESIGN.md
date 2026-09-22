@@ -1,6 +1,11 @@
 # Handoff — redesign + NFL dashboards
 
-**Current status — 2026-09-09:** Zach reviewed the batch in §20–22 locally
+**Current status — 2026-09-22:** see §32 first: the EPA work and a Pick'em
+hotfix that was deployed before being committed are now committed on the
+`epa-pipeline` branch (not `main`, not pushed). What follows is the
+2026-09-09 status.
+
+**Status — 2026-09-09:** Zach reviewed the batch in §20–22 locally
 (Broadsheet default, the app-wide type-system change with two live-reviewed
 corrections, the NFL News tab, the detailed NFL team Schedule tab, and
 per-team news) and asked to deploy it. Pushed to `main`/`origin/main` as commit
@@ -17,9 +22,24 @@ that the historical branch-deploy hazard does not currently apply) — read it
 before assuming those are resolved. **Zach is taking the next planning round
 — the still-open redesign decisions listed at the end of §23 — to Codex/
 ChatGPT rather than deciding them in this session; nothing past this point was
-decided here.** Sections 17–19 contain the prior implementation and release
-record. Older sections preserve the original Claude handoff and historical
-status.
+decided here.** §24 records the EPA planning round and §25 the EPA
+source-and-contract spike that ran against it: the college source is now
+selected on measured evidence, and the constraint turned out to be current-season
+coverage rather than asset availability. §26 records the accepted
+spike and Phase 1; §27 records Phase 2 — Worker validation, storage and routes,
+all local, with the 12 remaining `test.sh` failures proven pre-existing against
+a pristine worktree. §28 is the Phase 2 contract-correction pass, which brings the EPA routes onto
+the accepted contract, adds provider drive data, fixes the split-denominator
+bug, and rebuilds the Pick'em harness on deterministic fixtures so the suite is
+fully green (244/244). §29 separates the repeat-safe canonical `schema.sql` from the
+one-time `0005` migration and proves both routes agree. §30 is Phase 3 — the scheduled ingestion
+pipeline, built and proven locally with a byte-reproducible archived-season dry
+run, and gated off until someone enables it. §30 carries the current tree state
+and the exact next task, which is the production release and needs explicit
+authorization. §31 records the separate fantasy integration plan and the accepted
+manual-import path for ESPN; it does not change §30's next task. Sections 17–19
+contain the prior implementation and release record. Older sections preserve the
+original Claude handoff and historical status.
 
 The original sections were written 2026-09-07 at the end of the planning/prototype
 session that opened this track. Their facts and decisions reflect that date; the
@@ -785,3 +805,707 @@ shipped:
 - **The page-content walkthrough Zach wanted** ("idk if I am good with what
   is on each page yet," §5) has not happened. Nothing about the current page
   contents should be assumed settled just because it shipped.
+
+## 24. NFL next-steps and EPA planning — 2026-09-09
+
+Planning only; no application, Worker, schema, database, workflow, or deployment
+changed. Zach asked for a sizeable implementation plan that can be handed back to
+Claude Code and explicitly added NFL expected points added (EPA) as a product
+goal, while leaving its granularity open for planning.
+
+The resulting living plan is `NFL-IMPLEMENTATION-PLAN.md`. It specifies a proposed
+NFL Overview league-pulse layout; researches nflverse's NFL data and
+SportsDataverse/cfbfastR's ESPN-derived CFB data; recommends separate league/model
+contracts using hybrid slim-play plus materialized-summary D1 storage; defines
+initial team/QB/rusher metrics and deferred attribution; and lays out offline
+ingestion, API, UI, validation, operations, and release gates.
+
+Zach then expanded the goal to ongoing college football. The CFB plan scopes the
+first release to finals discovered through Fixtura's existing ESPN `groups=80`
+coverage, uses ESPN IDs already present in the preferred source, and adds Game
+Center then CFB team Stats before deciding whether CFB deserves a top-level
+dashboard. The preferred compiled 2026 Parquet was not assumed available: the
+release page checked on 2026-09-09 listed compiled seasons through 2025 despite
+active 2026-aware workflows. Phase C0 therefore compares that exact asset,
+per-game enriched final JSON, and locally processed cfbfastR output and selects one
+canonical source rather than stacking silent fallbacks.
+
+The plan deliberately starts with source/contract inspection and sample payloads;
+it does not authorize a migration, backfill, Worker deploy, or frontend release.
+
+The Game Center portion now has an implementation-ready proposed screen contract
+for both leagues: final-game tab eligibility and placement, lazy Worker reads,
+modal/Drive polling lifecycle, complete/pending/partial/failed/unsupported states,
+desktop and mobile hierarchy, value formatting, accessibility, a shared outer API
+envelope, league-specific routes, identity limits on play links, and acceptance
+checks. A conversation-only layout mockup was created outside the repository; no
+frontend component or CSS was changed.
+
+`CLAUDE.md` now contains Claude-specific model routing so its instruction to ignore
+Codex-only model mechanics does not leave delegation ambiguous: Opus leads source,
+architecture, integration, and review; Sonnet receives bounded implementation;
+Haiku receives small mechanical work; delegation is limited to two concurrent,
+disjoint tasks and every result returns to the lead for review. The implementation
+plan also contains a copy-ready Claude Code startup prompt that begins with Phase
+C0 and preserves the current planning-only boundary.
+
+## 25. EPA source-and-contract spike (Phase C0 + N0) — 2026-09-09
+
+**Scope:** the "First implementation-ready task for Claude Code" in
+`NFL-IMPLEMENTATION-PLAN.md`, and nothing beyond it. Phase C0 first because
+the college season is live and its source availability was unresolved, then
+Phase N0.
+
+**Branch/commit:** `main`, aligned with `origin/main` at `5dfc989`. **Nothing
+committed and nothing pushed.** No migration, no schema change, no remote or
+local D1 command, no Worker deploy, no frontend change — verified by the fact
+that the only files touched are the eight new ones below plus two planning
+documents.
+
+**Working tree:** the pre-existing intentional planning edits are preserved
+untouched (`CLAUDE.md` model-routing block, `DECISIONS.md`, `HANDOFF-REDESIGN.md`
+§24, and the untracked `NFL-IMPLEMENTATION-PLAN.md`). Added this session:
+
+```
+worker/scripts/epa/{README.md,requirements.txt,.gitignore,
+                    common.py,sources.py,nfl.py,cfb.py,epa_inspect.py}
+```
+
+plus `DECISIONS.md` "CFB EPA source selected; NFL source confirmed" and this
+section. `.venv/`, `cache/` and `out/` are gitignored; `git status` shows only
+the eight intended files.
+
+**Local, remote, frontend, Worker, database alignment:** local == remote
+(`main` @ `5dfc989`) apart from the uncommitted files above. The frontend, the
+deployed Worker, and D1 are all untouched and therefore still aligned with
+`main` as recorded in §23. The deployed-from-a-branch hazard remains
+not-currently-applicable; nothing here goes near a deploy.
+
+### What the tool is
+
+`worker/scripts/epa/` is offline, deterministic inspection tooling: one
+dependency (DuckDB) in a local venv, separate NFL and CFB adapters, separate
+exported versioned qualifying-play predicates, and five subcommands —
+`probe`, `extract`, `coverage`, `reconcile`, `sizing`. It has no write path to
+anything except its own gitignored `cache/` and `out/`. Exact commands are in
+its README.
+
+### What it found
+
+The full evidence is in `worker/scripts/epa/README.md` and the decision is in
+`DECISIONS.md`. The three things that change what gets built:
+
+1. **The 2026 CFB compiled Parquet exists and is fresh** (rebuilt daily, with a
+   machine-readable `timestamp.json`). The plan's central uncertainty is
+   resolved in favour of the preferred source.
+2. **Coverage, not availability, is the real constraint.** 53 of ESPN's 99
+   `groups=80` week-1 finals are importable; 44 are present but were captured
+   mid-game and never re-captured; 2 are absent. Truncated games carry real EPA
+   and read as low-scoring games. `status_type_completed` is the only safe
+   gate — play count is not, since a truncated game held 179 rows against a
+   complete game's 161.
+3. **Neither documented fallback helps.** The per-game enriched JSON is the
+   same capture (it reconciles exactly with the Parquet, *including* on the
+   truncated numbers), and cfbfastR-locally could not be run because R is not
+   installed here.
+
+NFL identity is exact both ways (272/272 games, 345/345 passers and rushers),
+every predicate column exists, and both sample games normalize and reconcile.
+
+### Real-data limitations — do not paper over these
+
+- **The CFB overtime path is untested.** No game in the 2026 asset reaches a
+  fifth period, and the one known week-1 overtime final (Charlotte–The Citadel,
+  `401862694`, `Final/3OT`) is one of the two games missing entirely. Verify
+  against a real overtime game before the college UI ships.
+- **Whether truncated current-season games heal, and how fast, is unknown.**
+  Week-1 games were still stale three to eleven days out. 2025 is 956/956
+  complete, so it does resolve eventually — but the recheck window for the
+  scheduled job must not be fixed at "the previous two weeks" until this is
+  observed.
+- **No live NFL 2026 data was available.** `play_by_play_2026.parquet` was a
+  404 all session; Week 1 kicks off tonight. Everything NFL here is archived
+  2025 data, and nothing about live-season behaviour was tested.
+- **D1 row storage was not measured** — only JSON bytes. ~85–95 MB per CFB
+  season, ~20 MB per NFL season, as JSON. Measure against a local D1 in Phase 1
+  before sizing anything.
+
+### Validation performed
+
+`probe`, `extract`, `coverage`, `reconcile` and `sizing` were each run against
+live upstream data. Four real games normalize and pass every contract check:
+NFL `401772810` (return TD scored by the non-possession team) and `401772921`
+(overtime, and a tie); CFB `401858422` (FBS vs FCS) and `401864495` (15 no-play
+penalties). Determinism confirmed — the same game extracted twice produces an
+identical `content_hash`, and referring to an NFL game by nflverse id or by
+ESPN event id produces the same hash. Rejection paths confirmed: a truncated
+CFB game, a game absent from the source, and an unknown NFL game each fail
+loudly with a specific reason.
+
+A Sonnet subagent then reviewed the tool read-only against the stated
+invariants, and its findings were re-measured against the source before
+anything was changed. Seven confirmed defects were fixed; the full list is in
+the README. The two that would have caused real damage:
+
+- **`content_hash` was not stable.** The CFB adapter folded a live release
+  timestamp into the hashed payload, so the hash changed whenever upstream
+  republished anything, even with byte-identical plays — defeating the only
+  purpose the hash has, which is letting a scheduled importer skip unchanged
+  games. Now hashed over a data core that excludes fetch-time metadata, and
+  verified stable across a simulated republish.
+- **NFL coverage hardcoded `game_type = 'REG'`**, so every postseason game
+  reported as missing. Fixing it exposed a worse trap: nflverse schedules have
+  **no `POST` value** — they use `WC`/`DIV`/`CON`/`SB`, and postseason weeks
+  *continue* the regular season's numbering, so ESPN seasontype 3 week 1 is
+  nflverse **week 19**. The pbp table separately uses `REG`/`POST`. Postseason
+  coverage now reports 6/6 rather than 0/6.
+
+One reviewer claim did not survive checking — that the kneel handling was
+wrong. Measured, kneels are correctly excluded (48 rows, 0 qualifying); spikes
+are the actual gap (3, all qualifying, and the source has no spike flag), and
+they are left in deliberately rather than fixed by pattern-matching
+description text. An earlier text search of my own had been contaminated by a
+player name containing "kneel", which is why both claims were re-measured
+rather than either one taken on trust.
+
+Two defects were found in my own validation before the review: a 404 on a
+not-yet-published season asset produced a raw traceback. That is hard-won detail 28 arriving
+through a different door, and in a scheduled importer it would be a thrown
+handler error every run until the season publishes. Upstream fetch failures are
+now typed — 4xx is a legible "not published yet" skip, 5xx and network failures
+stay loud and retryable. Nothing globally suppresses upstream errors.
+
+And nflverse and SportsDataverse both
+publish a file named `play_by_play_2025.parquet`, so the download cache keyed
+by basename would have silently served one league's season file to the other
+league's adapter. The cache is now keyed by a hash of the full URL.
+
+### Exact next implementation-ready task
+
+Superseded by §26 — the spike was accepted, the schema questions were decided,
+and Phase 1 has been built locally. The open-question list that used to live
+here is now maintained in one place, `worker/scripts/epa/README.md`
+"Question ledger", because the copy here and the copy there had already drifted
+apart once.
+
+Then Phase 1 (`0003_nfl_epa.sql`, and `0004_cfb_epa.sql` now that the CFB source
+is selected), with all id columns `TEXT` — the CFB play id
+`401858212104999901` is four orders of magnitude past JavaScript's safe integer
+range and would round silently as a JSON number.
+
+Still untouched and still open from §23: the two disposable test pools in
+production D1, the D1 paid-plan/backup question, and the Worker error-rate
+alert.
+
+## 26. EPA spike accepted; Phase 1 built locally — 2026-09-09
+
+**Scope:** Zach reviewed the Phase C0/N0 diff and accepted the spike, recorded
+the outstanding schema decisions, and asked for Phase 1 design plus a real
+local D1 storage measurement. Explicitly excluded and not done: **no remote
+migration, no deploy, no frontend work.**
+
+**Branch/commit:** `main`, still aligned with `origin/main` at `5dfc989`.
+**Nothing committed, nothing pushed.** No `--remote` D1 command was issued, no
+Worker was deployed, and no file under `src/` (frontend or Worker) was touched.
+
+**Decisions recorded** in `DECISIONS.md` "EPA spike accepted; storage contract
+settled": store `description` from the start; backfill 2025 and 2026 only; keep
+the 11 source-qualified penalty-no-play records with their `is_penalty_no_play`
+audit flag; retain the documented CFB spike behavior; NFL and CFB keep separate
+shapes, tables, routes and predicates. **Public CFB release stays gated on
+attribution and data-term review** — local storage and local routes may
+proceed, shipping CFB EPA to the live site may not. NFL is not blocked by this.
+
+**Coverage re-measured** ~13.5 hours on: the 2026 asset was byte-identical
+(same sha256, `Last-Modified` unchanged), so week-1 coverage is still 53 of 99.
+The source simply had not republished, so this is **not** evidence about
+whether truncated games heal. That question needs a reading taken after an
+actual upstream rebuild.
+
+**Question lists reconciled.** The README and this handoff each carried an
+open-question list and they had already drifted (the handoff's said four items
+gated Phase 1; the README's had six). There is now **one** ledger, in
+`worker/scripts/epa/README.md` — five settled with their decisions, three still
+open, none of which blocks Phase 1. §25's next-task section points here rather
+than keeping a second copy.
+
+### Phase 1 — what was built
+
+Design and measurements are in `worker/EPA-PHASE1.md`. Added:
+
+```
+worker/migrations/0003_nfl_epa.sql     worker/migrations/0004_cfb_epa.sql
+worker/EPA-PHASE1.md                   worker/test/epa-schema.test.py
+worker/scripts/epa/load_local_d1.py
+```
+
+and `worker/schema.sql` now mirrors both migrations verbatim, as the existing
+convention requires.
+
+**Validation, all local:** fresh database applies cleanly; an existing pre-EPA
+database with seeded users/pools/picks/`nfl_stat_games` migrates with every row
+intact; `.schema` is **identical** either way; re-applying is a no-op; 69 real
+games (53 CFB + 16 NFL, 8,804 plays) import and **re-import idempotently** with
+`first_imported_at` preserved. `npm run test:stats` is green — 38 node tests
+plus three Python schema tests, including a new one asserting that a CFB play
+id past 2^53 round-trips exactly as TEXT.
+
+**Measured storage — this supersedes the JSON estimate.** Via `dbstat` over the
+real load, counting every index: NFL **319 bytes/play**, CFB **393
+bytes/play**. Projected for the approved 2025 + 2026 backfill: **116 MB total**
+(NFL 22 MB, CFB 94 MB), about **23% of the 500 MB free-tier cap** before
+whatever the database already holds. Real D1 came in materially cheaper than
+JSON suggested, because JSON repeats every key name per row.
+
+**One correction that matters.** Descriptions were reported earlier as "~20% of
+a play row" from JSON. Measured in storage they are **41–47% of the plays
+table** and **30% of projected EPA storage** (34.7 MB of the 116 MB). The
+decision to store them stands and the cost is affordable, but the figure that
+decision was weighed against was too low.
+
+**One regression caught and fixed.** `test/game-stats-schema.test.py` and
+`test/game-stats-capture-schema.test.py` both asserted that `schema.sql` *ends
+with* a specific migration, which broke the moment 0003/0004 were mirrored.
+Both now locate their migration by position within the ordered migration tail,
+so they stay correct as further migrations are added instead of failing again
+each time.
+
+### Exact next implementation-ready task
+
+Phase 2 — the Worker side, still local:
+
+1. Payload validation and aggregation **inside the Worker**. The spike
+   validates in Python, offline; the Worker needs its own and cannot import it.
+2. Correction-aware atomic storage as Worker code rather than
+   `load_local_d1.py`, which is a measurement tool, not a shipping path.
+3. Private machine-authenticated import routes and public read routes, keeping
+   private-first routing and the prefix-disjointness assertions intact.
+4. Extend `worker/test.sh` without reducing its current assertions, and run the
+   whole suite against disposable local D1.
+
+`worker/test.sh` was **not** run this session: no file under `worker/src/` was
+touched, so the integration suite's subject is unchanged, and running it needs
+`npm run dev` in a second terminal. It must be run for Phase 2, where Worker
+code does change.
+
+Still untouched and still open from §23: the two disposable test pools in
+production D1, the D1 paid-plan/backup question (sharper now — EPA adds ~116 MB
+of derived data to a database whose Time Travel window is 7 days on the free
+plan), and the Worker error-rate alert.
+
+## 27. EPA Phase 2 — Worker validation, storage and routes — 2026-09-10
+
+**Scope:** the six ordered Phase 2 steps. All local. **No remote migration, no
+deploy, no frontend work** — verified: nothing under `/src` (frontend),
+`index.html` or `styles.css` was touched, and no `--remote` command was run.
+
+**Branch/commit:** `main`, still aligned with `origin/main` at `5dfc989`.
+Nothing committed, nothing pushed. Design detail is in `worker/EPA-PHASE2.md`.
+
+Added: `worker/src/epa-{validate,store,import,read}.js`,
+`worker/test/epa-{validate,store}.test.js`, `worker/EPA-PHASE2.md`, 45 new
+`test.sh` assertions, and an `EPA_IMPORT_TOKEN` entry in `.dev.vars.example`.
+Changed: `worker/src/index.js` (an `epa` private prefix, a
+`stats/:league/epa/...` dispatch, one `/health` field) and `package.json`.
+`pools.js`, `auth.js`, `me.js`, `proxy.js`, `trends.js` and every
+`game-stats-*` module are untouched.
+
+### The load-bearing decisions
+
+- **The Worker recomputes every aggregate from the plays** and cross-checks the
+  submitted team/player rows, rejecting a disagreement with the field named and
+  both values. The offline tool runs on a laptop, in Python, outside the
+  Worker; the Pick'em rule that a client-enforced rule is not a rule applies
+  here unchanged.
+- **`epa` is a private prefix**, so an import can never reach the cached lane;
+  the disjointness assertion now covers it. Reads sit under the existing
+  `stats` public prefix and dispatch on segment 2, leaving `/stats/nfl/...`
+  byte-identical.
+- **Import auth is a dedicated `EPA_IMPORT_TOKEN`**, compared in constant time,
+  never logged or echoed, and **503 when unset rather than 401** — "cannot" and
+  "may not" are different problems.
+- **207 on partial failure**, so a workflow cannot read a half-failed import as
+  success.
+
+### One real bug found by a failing test
+
+Nothing prevented a single athlete accumulating EPA under two different
+possession teams in one game: the code took whichever team appeared first and
+silently attributed half that player's EPA to the wrong side. Now rejected in
+both leagues, with a test.
+
+### Validation
+
+`npm run test:stats` — **67 unit tests + 3 Python schema tests, all green.**
+
+`./test.sh` against local D1 — **220 passed, 12 failed.**
+
+**The 12 failures are pre-existing and have nothing to do with EPA.** This was
+verified, not assumed: a pristine `git worktree` at `5dfc989` containing no EPA
+code was run on a separate port and produced **the same 12 failures with
+identical text** (175 passed, 12 failed). All 45 EPA assertions pass, including
+route separation, the private lane's `no-store`, the public lane's cache
+headers, CORS refusal for an unknown origin, and a leak check that finds no
+account keys in a public read.
+
+**The cause is time, not code, and it will recur all season.** The Pick'em
+tests assume the current NFL week has no started games. Week 1 kicked off
+2026-09-09, so ESPN now reports one of the 16 week-1 games as `Final`; the
+tests pick the week's first two games, one is legitimately locked, and every
+downstream assertion cascades. Fixing it means seeding fixtures instead of
+reading the live scoreboard, or selecting a week with no started games. Left
+alone deliberately — rewriting Pick'em tests is not Phase 2's business, and it
+is a real decision about how that suite should work.
+
+### Exact next implementation-ready task
+
+Phase 3, the scheduled ingestion pipeline, still local:
+
+1. The offline normalizer already exists (`scripts/epa/`); add pinned
+   dependencies and dry-run / one-game / one-week / season modes for it.
+2. A GitHub Actions workflow with `workflow_dispatch`, posting bounded payloads
+   to `POST /epa/import/:league` with the dedicated secret.
+3. An independent CFB job following the source's publication window. **Do not
+   fix its recheck window yet** — whether truncated college games heal, and how
+   fast, is still unmeasured (§26).
+4. Coverage artifacts and documented replay steps.
+
+Two things worth doing before or alongside it, neither blocking:
+
+- **Fix the Pick'em test fragility above.** It will now fail every week of the
+  season and makes `test.sh` harder to trust as a regression signal.
+- **Re-run `coverage --league cfb --season 2026 --week 1`** once the upstream
+  actually republishes, to answer the healing question.
+
+Still open from §23: the two disposable test pools in production D1, the D1
+paid-plan/backup question, and the Worker error-rate alert.
+
+## 28. EPA Phase 2 contract-correction pass — 2026-09-10
+
+**Scope:** Phase 3 paused. Phase 2 brought into line with the accepted contract
+in `NFL-IMPLEMENTATION-PLAN.md`, all ten requested items. All local: **no
+remote migration, no secret write, no deploy, no commit, no push.** Design
+detail is in `worker/EPA-PHASE2.md`; the choices that could have gone another
+way are in `DECISIONS.md` ("EPA contract-correction decisions").
+
+**Branch/commit:** `main`, still aligned with `origin/main` at `5dfc989`.
+Nothing committed. The frontend is untouched.
+
+### What changed
+
+- **Drives** are now first-class, and are **real provider data**. Both
+  upstreams publish drive summaries directly (nflverse `fixed_drive*`,
+  cfbfastR `drive.*`), so the offline normalizers, payloads, validators,
+  migration `0005`, storage and the size projection were all extended. Result,
+  play count and yards are the source's own; only EPA is derived.
+- **NFL drive yards are null and stay null.** nflverse has no drive
+  net-yards field, and subtracting its yard-line strings would be the
+  field-position inference the contract forbids — and would be wrong on any
+  drive with a penalty or change of possession. CFB has a real `drive.yards`.
+- **The split-denominator bug is fixed.** Defensive pass/rush EPA was being
+  divided by *all* defensive plays. Split success rates needed numerators the
+  schema did not have, so `0005` adds `def_pass_success_allowed` /
+  `def_rush_success_allowed` rather than approximating them.
+- **Teams return away then home**, impact plays carry `clock` and `driveId`
+  with a deterministic play-id tiebreaker, ranking is defined for both offence
+  and defence with the direction stated in the response, player identity is the
+  latest team by chronology instead of `MAX(team)`, and coverage/provenance
+  match the contract's blocks.
+- **The EPA routes use the contract's camelCase keys**, unlike the older
+  `/stats/nfl/...` snake_case routes. Deliberate, confined to the EPA tree, and
+  recorded as a decision.
+
+### The Pick'em harness
+
+Rebuilt on deterministic fixtures rather than a different "future" week.
+`ESPN_SCOREBOARD_BASE` overrides the scoreboard host — unset in production and
+in `npm run dev`, pointed at `test/fixtures/scoreboard-server.mjs` by the new
+`npm run dev:test`. `test.sh` starts the fixture server itself and **refuses to
+run against live data**, checking `/health`'s `scoreboard_override` flag first.
+The Worker remains the authority on kickoff, eligibility and results; only the
+address it reads changes. The two in-test seed scripts were repointed at the
+same fixtures — seeding from live ESPN while the worker served fixtures
+produced picks whose event ids did not exist in the pool week, so nothing
+scored.
+
+### Results
+
+**`npm run test:stats`: 88 passed, 0 failed.**
+**`./test.sh`: 244 passed, 0 failed — fully green.**
+
+The 12 calendar-dependent Pick'em failures recorded in §27 are gone, and they
+are gone because the dependency was removed, not because a different week was
+chosen.
+
+Storage re-measured with drives: **125.5 MB** for the approved 2025+2026
+backfill, up from 116.1 MB, still about 25% of the 500 MB free tier.
+
+### Two things worth knowing
+
+- **`schema.sql` and migration `0005` are different artifacts.** `schema.sql`
+  is the **repeat-safe canonical final schema**: every statement is
+  `CREATE ... IF NOT EXISTS` and the columns `0005` adds are inline, so
+  applying it twice is a no-op and `npm run db:schema:local` stays re-runnable.
+  `migrations/0005_epa_drives_and_coverage.sql` is the **one-time migration**
+  for a database that already has `0003`/`0004`; it uses `ALTER TABLE ADD
+  COLUMN`, so it must be applied exactly once and **migration tracking is what
+  prevents a second application**. Both routes produce identical table
+  definitions, and the schema test proves it.
+- **One assertion has no teeth, and says so.** The impact-play tiebreaker test
+  cannot detect removal of the `play_id ASC` clause: the plays table's primary
+  key is `(event_id, play_id)`, so SQLite already returns ties in play-id
+  order. Measured, with ids inserted in descending order. The clause stays
+  because incidental index behaviour is not a guarantee, but the limitation is
+  recorded in the test.
+
+### Exact next implementation-ready task
+
+Phase 3, the scheduled ingestion pipeline, still local — unchanged from §27:
+pinned dependencies and dry-run/one-game/one-week/season modes for
+`scripts/epa/`, a `workflow_dispatch` GitHub Actions workflow posting bounded
+payloads to `POST /epa/import/:league`, an independent CFB job, coverage
+artifacts and replay steps. **Do not fix the CFB recheck window yet** — whether
+truncated college games heal, and how fast, is still unmeasured (§26).
+
+Still open from §23: the two disposable test pools in production D1, the D1
+paid-plan/backup question, and the Worker error-rate alert.
+
+## 29. Canonical schema separated from the one-time migration — 2026-09-10
+
+**Scope:** a correction to §28's schema handling. Phase 3 stays paused. All
+local: no remote change, no deployment, no commit, no push.
+
+**Branch/commit:** `main`, still aligned with `origin/main` at `5dfc989`.
+
+§28 left `schema.sql` as a concatenation of every migration, which dragged
+`0005`'s `ALTER TABLE` statements into it and made the canonical schema itself
+non-repeat-safe — `npm run db:schema:local` errored on a second run. That
+conflated two artifacts that need different properties:
+
+- **`schema.sql` — the repeat-safe canonical final schema.** Every statement is
+  `CREATE ... IF NOT EXISTS`. The columns `0005` adds are now written inline,
+  positioned after the last column and before any table constraint, which is
+  exactly where `ALTER TABLE` places them. No executable `ALTER` remains in the
+  file. Applying it twice is a clean no-op, verified against a real local D1.
+- **`migrations/0005_epa_drives_and_coverage.sql` — the one-time migration**,
+  unchanged, for databases that already carry `0003`/`0004`. It is not
+  repeat-safe and cannot be, and **migration tracking is what must prevent a
+  second application**; the duplicate-column failure is a backstop, not the
+  mechanism.
+
+`test/epa-schema.test.py` now proves all four required properties:
+
+1. `schema.sql` applies twice to a fresh database with no error.
+2. `0001`+`0002`+`0003`+`0004` then `0005` **once** produces table definitions
+   identical to fresh `schema.sql` — compared at pragma level (columns, types,
+   nullability, defaults, primary keys, indexes, foreign keys) across all 24
+   tables, not by SQL text, since the two files are deliberately worded
+   differently.
+3. A database already holding account, pool, pool-member, pick, snapshot and
+   EPA rows comes through `0005` with every row and every pre-existing value
+   intact, and the new columns arriving as NULL rather than silently defaulted
+   to 0.
+4. `0005` applied twice still fails, on `duplicate column`, with the test
+   asserting that failure rather than hiding it.
+
+The two older schema tests assumed `schema.sql` was a migration concatenation
+and were updated: they now assert that `0001` and `0002` are embedded verbatim
+and in order, and build their pre-migration databases from the prefix before
+each, which is what they actually needed.
+
+**Results: `npm run test:stats` 88 passed, 0 failed. `./test.sh` 244 passed,
+0 failed.** Both re-run against a local D1 rebuilt from the canonical schema.
+`db:schema:local` was also run twice in succession to confirm the ergonomic
+regression is gone.
+
+One cosmetic fix: `test.sh` now disowns the fixture server so the shell no
+longer prints `Terminated` after `passed=244 failed=0`, which read like a
+failure.
+
+### Exact next implementation-ready task
+
+Unchanged from §28: Phase 3, the scheduled ingestion pipeline, still local.
+**Do not fix the CFB recheck window yet** — whether truncated college games
+heal, and how fast, is still unmeasured (§26).
+
+Still open from §23: the two disposable test pools in production D1, the D1
+paid-plan/backup question, and the Worker error-rate alert.
+
+## 30. EPA Phase 3 — scheduled ingestion pipeline — 2026-09-10
+
+**Scope:** Phase 3, built and proven locally. **No production secret, no remote
+migration, no deployment, no commit, no push.** The workflow file exists and is
+**gated off**: every job requires the repository variable `EPA_INGEST_ENABLED`
+to be `'true'`, so it does nothing until someone enables it.
+
+**Branch/commit:** `main`, still aligned with `origin/main` at `5dfc989`.
+Design detail and the replay/recovery procedures are in `worker/EPA-PHASE3.md`;
+the choices are in `DECISIONS.md` ("EPA Phase 3 ingestion decisions").
+
+Added: `worker/scripts/epa/ingest.py`, `worker/scripts/epa/verify-determinism.sh`,
+`.github/workflows/epa-ingest.yml`, `worker/EPA-PHASE3.md`. Changed:
+`worker/scripts/epa/requirements.txt` (now hash-pinned), `nfl.py`/`cfb.py`
+(drive coverage, provider sentinels), `worker/src/epa-validate.js` (drive
+rule), `worker/test/epa-validate.test.js` (+2 tests).
+
+### Two data findings that changed the contract
+
+Both were found by running the pipeline against the real Worker rather than by
+reading the source, and both would have shipped silently wrong.
+
+- **`drive_play_count` excludes accepted-penalty plays.** Our predicate keeps
+  them deliberately, so the modeled count exceeds the provider's on **18.1% of
+  2025 drives** (1,041 of 5,745). The first upload of NFL week 1 rejected **all
+  16 games** on a validator rule asserting `modeled <= provider`. That rule was
+  wrong: the two counts measure different things. Drive coverage is now
+  measured against what the model was in scope to score, both counts are
+  stored, and there are tests pinning the finding.
+- **The college source uses sentinels for "unknown".** `down = 0`,
+  `end period = 0`, and **negative athlete ids** for unidentified participants.
+  The first CFB upload rejected 9 of 53 games on these. They now become null,
+  because that is what they mean — the play and its EPA are kept, only the
+  attribution or the down is absent. Storing `0` would render as "0th down";
+  storing a negative id would create a player row that can never resolve to
+  ESPN.
+
+### Proven, not asserted
+
+- **Determinism — the Phase 3 exit criterion.** `./verify-determinism.sh nfl
+  2025 season` runs a full archived season twice: **report byte-identical, all
+  272 payloads byte-identical.** Also verified for CFB week 1 (53 games). This
+  is load-bearing rather than tidy: the pipeline skips unchanged games by
+  content hash, so non-deterministic normalization would make every run look
+  like a correction.
+- **End-to-end against the local Worker.** NFL 2025 week 1: 16 games,
+  2 batches, all `inserted`. CFB 2026 week 1: 53 games, 7 batches, all through;
+  a re-run returned **53 `unchanged`**, proving the hash-based skip works from
+  both ends.
+- **Auth refusal**: with `EPA_IMPORT_TOKEN` unset the runner exits 2 and
+  uploads nothing.
+- **Workflow structure**: YAML parsed and asserted — two jobs, no `needs:`
+  between them, both gated off, manual runs defaulting to dry run, recheck
+  window unset by default.
+
+### The CFB recheck window remains unresolved, by design
+
+`--recheck-weeks` is unset by default, which revisits every week still holding
+an incomplete game — bounded by the season, and the conservative choice while
+the healing behaviour is unmeasured (§26). The workflow input is documented as
+"leave blank". Every report records the policy string that was applied. **Do
+not put a number there until someone measures when truncated games actually
+heal.**
+
+### Results
+
+**`npm run test:stats`: 90 passed, 0 failed.**
+**`./test.sh`: 244 passed, 0 failed.**
+
+The unit count is 90 rather than the 88 recorded in §29 because two tests were
+added, pinning the drive-count finding above: one asserting a drive may model
+*more* plays than the provider counted, one asserting a drive that missed a
+play in scope is partial and cannot claim complete.
+
+### Exact next implementation-ready task
+
+Phase 3 is complete locally. Phase 4 is the **controlled production release**,
+and it needs explicit authorization — it is the first step in this whole track
+that writes to production:
+
+1. Verify the outgoing Worker tree still contains trends, ESPN game-stat
+   capture, cron wiring, auth and Pick'em routes.
+2. Verify backup/recovery and export a backup **before** any migration. D1 Time
+   Travel is 7 days on the free plan and real picks plus unbackfillable
+   `stat_snapshots` already live there (§23, still open).
+3. Apply `0003`, `0004`, `0005` remotely in order — each a separate approval
+   and recovery checkpoint, `0005` exactly once.
+4. Deploy the Worker; check `/health`, auth privacy, Pick'em reads, CORS, cache
+   headers and the existing stats routes.
+5. Set `EPA_IMPORT_TOKEN` (Wrangler secret and Actions secret), `EPA_API_BASE`,
+   and only then `EPA_INGEST_ENABLED=true`.
+6. Import one archived validation game per league before any backfill.
+7. **Public CFB release stays gated on the attribution and data-term review**
+   — separate from all of the above.
+
+Also still open: re-measure CFB week-1 coverage once the upstream actually
+republishes, to answer the healing question; the two disposable test pools in
+production D1; the D1 paid-plan question; and the Worker error-rate alert
+(§23).
+
+## 31. Fantasy roster and league integration plan — 2026-09-10
+
+**Scope:** planning only. No fantasy Worker route, schema, provider credential,
+frontend view or production state was created. The implementation-ready product,
+provider, security, storage, testing and phased rollout plan is in
+`FANTASY-INTEGRATION-PLAN.md`.
+
+The recommended provider order is Sleeper, then Yahoo after approval. Sleeper
+has an official public read-only API and is the smallest viable connected
+integration, but commercial use requires a licensing conversation and its
+documented matchup contract guarantees team totals rather than a full live
+per-player scoring feed. Yahoo has an official Fantasy API with league settings,
+weekly rosters, scoreboards and player points, but access now requires application
+review and OAuth. Yahoo's general developer terms also restrict most Yahoo
+user-data storage to 24 hours unless the approved API agreement explicitly grants
+a longer period, so Yahoo must use expiring cached snapshots rather than permanent
+history.
+
+**Accepted ESPN direction:** manual roster-and-rules import. No supported public
+Fantasy developer/OAuth program was found, private league access commonly depends
+on copying full ESPN web-session cookies, and Disney's current terms restrict
+automated extraction without express written permission. Fixtura will not collect
+`espn_s2`/`SWID` or ship against ESPN's undocumented internal fantasy endpoints.
+The planned import is a versioned CSV roster plus a guided scoring-rules form,
+always labeled `Manual import` with an as-of date. Live Fixtura NFL game, stats and
+EPA enrichment may update normally, while ESPN lineup, transaction, matchup and
+official fantasy-point data remain absent or stale until the user imports again.
+
+The first product remains read-only. Provider integrations keep provider fantasy
+scores, rosters, lineups, matchups and rules authoritative; the ESPN manual path
+keeps user-submitted roster and rules explicitly identified. Fixtura does not
+recalculate or impersonate an official fantasy result.
+
+**Timing:** EPA Phase 3 is now complete locally, but its controlled production
+release remains the exact next task in §30. Do not mix fantasy implementation into
+that uncommitted release slice. Apply for Yahoo access and clarify Sleeper
+licensing when ready; begin Fantasy Phase F0 after EPA is checkpointed. This note
+is not authorization for provider signup, credential creation, migration,
+deployment, commit or push.
+
+## 32. EPA work committed; an uncommitted Pick'em hotfix found in production — 2026-09-22
+
+**Scope:** commits only. No push, no migration, no deploy in this session.
+
+**Branch:** `epa-pipeline`, cut from `main` at `5dfc989`, not pushed. Commits:
+
+- `d8753f6` Pick'em integration tests against deterministic scoreboard fixtures
+  (`ESPN_SCOREBOARD_BASE` override, `test/fixtures/scoreboard-server.mjs`,
+  `npm run dev:test`, `/health.scoreboard_override`).
+- `d762bd9` `scoreWeek()` writes only newly-final or changed results.
+- EPA Worker storage, import and read routes, migrations 0003–0005.
+- EPA ingestion pipeline and the gated workflow.
+- This docs commit (plans, decisions, handoff, CLAUDE.md delegation policy).
+
+**Found while committing — undocumented production deploy.** `wrangler
+deployments list` shows a Worker deploy at **2026-09-22 01:39 UTC** (version
+`81efe37c`, 20:39 CDT on 09-21) not recorded anywhere. `pools.js` was edited at
+19:20 CDT that evening with the `scoreWeek()` change, whose comment cites D1
+free-tier alerts on 2026-09-21. `epa-import.js`, `epa-read.js` and `index.js`
+all carry an mtime of 20:39 CDT — the deploy minute — yet production `/health`
+lacks the `epa_import_configured` field and `/stats/nfl/epa/...` 404s. The
+likely reading (inferred, not proven — Workers does not expose deployed source
+here) is that the EPA wiring was temporarily set aside so only the Pick'em fix
+shipped, then restored. Treat production as: 2026-09-09 Worker **plus** the
+`scoreWeek()` write fix, **without** EPA.
+
+**Validation on the committed tree:** `npm run test:stats` 90/90;
+`./test.sh` against `npm run dev:test` 244/244. Staged blobs of the two split
+files were syntax-checked separately.
+
+**Still open:** everything in §30's Phase 4 list and its trailing items; plus
+confirm the D1 free-tier alerts have stopped since the hotfix, since
+rows-written pressure is also a reason to settle the $5/mo plan question.
+
+**Exact next task:** decide how `epa-pipeline` reaches `main`. Merging to
+`main` and pushing is safe for the frontend (no frontend file changed) and
+closes the deploy hazard in CLAUDE.md; after that, §30 Phase 4 is the next
+step and needs explicit authorization.
