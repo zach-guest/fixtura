@@ -139,6 +139,29 @@ test('partial and failed rows wait thirty minutes before another attempt', async
   assert.equal(db.states.get('401772830').attempt_count, 1);
 });
 
+test('a game still partial 12h after kickoff backs off to the normal recheck schedule', async () => {
+  const at = (id, kickoff) => ({ ...event(id), date: new Date(kickoff * 1000).toISOString() });
+  const partialState = (lastAttempt) => ({ discovered_at: NOW - 100000, last_seen_at: NOW, last_attempt_at: lastAttempt, last_success_at: lastAttempt, attempt_count: 5, status: 'partial' });
+  const cases = [
+    // [id, kickoff, last attempt, due?]
+    ['401772723', NOW - 3 * 3600, NOW - 31 * 60, true],        // fresh game: 30-minute retry still applies
+    ['401772830', NOW - 20 * 3600, NOW - 31 * 60, false],      // 20h old: waits 6h, not 30 minutes
+    ['401772831', NOW - 20 * 3600, NOW - 7 * 3600, true],      // ... and is due once 6h have passed
+    ['401772832', NOW - 5 * 86400, NOW - 7 * 3600, false],     // past 72h: waits a full day
+  ];
+  for (const [id, kickoff, last, expectDue] of cases) {
+    const db = new FakeDB();
+    db.games.set(id, { coverage: 'partial', captured_at: last });
+    db.states.set(id, partialState(last));
+    const summaries = { [id]: new Error('not fetched in this test') };
+    const fetchJSON = feedFor(board([], 2), [['week=2', board([at(id, kickoff)])], ['week=1', board([])]], summaries);
+    let outcome;
+    try { outcome = await captureNFLGameStats({ DB: db }, null, { clock: () => NOW * 1000, fetchJSON }); }
+    catch (error) { outcome = error.outcome; }
+    assert.equal(outcome.due, expectDue ? 1 : 0, `${id}: kickoff ${(NOW - kickoff) / 3600}h ago, last attempt ${(NOW - last) / 60}min ago`);
+  }
+});
+
 test('discovery requires the completed post-game state and ignores an out-of-scope page event', async () => {
   const notPost = { ...event('401772723'), status: { type: { completed: true, state: 'in' } } };
   assert.deepEqual(discoverNFLFinalGames(board([notPost])), []);

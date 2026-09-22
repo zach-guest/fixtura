@@ -9,6 +9,11 @@ const RETRY_SECONDS = 30 * 60;
 const RECENT_RECHECK_SECONDS = 6 * 60 * 60;
 const OLD_RECHECK_SECONDS = 24 * 60 * 60;
 const RECENT_KICKOFF_SECONDS = 72 * 60 * 60;
+// A game still partial this long after kickoff is usually missing a cell ESPN
+// never publishes (e.g. adjusted QBR for a backup QB), so fast retries only
+// burn slots: ATL@PIT 2026 reached 259 attempts at every-30-minutes. After
+// this it rechecks on the same schedule as a complete game.
+const PARTIAL_FAST_RETRY_SECONDS = 12 * 60 * 60;
 
 function positiveInteger(value) {
   return Number.isInteger(value) && value > 0 ? value : null;
@@ -69,7 +74,11 @@ function dueCandidate(candidate, game, state, now) {
   }
   if (!game) return { ...candidate, priority: 0, freshness: state?.discovered_at || 0 };
   if (game.coverage === 'partial' || state?.status === 'partial') {
-    return sinceAttempt >= RETRY_SECONDS ? { ...candidate, priority: 1, freshness: attempted || 0 } : null;
+    const kickoff = epoch(candidate.kickoff);
+    const age = kickoff === null ? 0 : now - kickoff;
+    const wait = age <= PARTIAL_FAST_RETRY_SECONDS ? RETRY_SECONDS
+      : age <= RECENT_KICKOFF_SECONDS ? RECENT_RECHECK_SECONDS : OLD_RECHECK_SECONDS;
+    return sinceAttempt >= wait ? { ...candidate, priority: 1, freshness: attempted || 0 } : null;
   }
   if (state?.status === 'discovered' || !state) return { ...candidate, priority: 0, freshness: state?.discovered_at || 0 };
   const lastSuccess = state.last_success_at;
@@ -145,6 +154,9 @@ export async function captureNFLGameStats(env, ctx, options = {}) {
   let insertedOrUpdated = 0;
   let unchanged = 0;
   let skipped = 0;
+  // Rows each capture actually changed, so the cron log shows what ESPN
+  // revises rather than leaving it to inference.
+  const changed = { statsUpserted: 0, statsDeleted: 0, playersUpserted: 0, playersDeleted: 0 };
   const failures = [];
   for (const candidate of due) {
     await env.DB.prepare(`UPDATE nfl_game_capture_state
@@ -169,6 +181,7 @@ export async function captureNFLGameStats(env, ctx, options = {}) {
         WHERE event_id = ? AND last_attempt_at <= ?
           AND (last_success_at IS NULL OR last_success_at <= ?)`)
         .bind(status, now, candidate.eventId, now, now).run();
+      if (result.changed) for (const k of Object.keys(changed)) changed[k] += result.changed[k] || 0;
       if (result.status === 'inserted' || result.status === 'updated') insertedOrUpdated += 1;
       else if (result.status === 'unchanged') unchanged += 1;
       else skipped += 1;
@@ -180,7 +193,7 @@ export async function captureNFLGameStats(env, ctx, options = {}) {
         .bind(cleanError(error), candidate.eventId, now, now).run();
     }
   }
-  const outcome = { status: 'ok', discovered: events.length, due: due.length, attempted: due.length, insertedOrUpdated, unchanged, skipped };
+  const outcome = { status: 'ok', discovered: events.length, due: due.length, attempted: due.length, insertedOrUpdated, unchanged, skipped, changed };
   if (failures.length) {
     const error = new Error(`NFL game capture failed for ${failures.length} event(s): ${failures.join('; ')}`);
     error.outcome = outcome;

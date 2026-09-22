@@ -46,3 +46,33 @@ test('D1: additive setup, safe reruns, corrections, freshness, missing data and 
  assert.equal(latest.stats.find(s=>s.athlete_id==='4432577'&&s.stat_key==='passingYards').value,192);
  assert.equal(latest.games.find(g=>g.event_id===fixture.header.id).captured_at,1788840800);
 });
+
+test('D1: a correction writes only changed rows and ends identical to a from-scratch write',async()=>{
+ // One stat corrected and one athlete dropped from every category.
+ const revised=structuredClone(fixture);passing(revised).stats[1]='201';
+ const dropped=revised.boxscore.players[1].statistics.at(-1).athletes.at(-1).athlete.id;
+ for (const team of revised.boxscore.players) for (const cat of team.statistics) cat.athletes=cat.athletes.filter(a=>a.athlete.id!==dropped);
+ const rows=b=>({players:b.players,stats:b.stats});
+
+ assert.equal((await call({action:'setup'})).status,200);
+ assert.equal((await call(input(fixture))).body.status,'inserted');
+ const before=(await call({action:'inspect'})).body;
+ const res=(await call(input(revised,1788840100))).body;
+ assert.equal(res.status,'updated');
+ const droppedStats=before.stats.filter(s=>s.athlete_id===dropped).length;
+ assert.ok(droppedStats>0);
+ // passingYards plus at most a couple of cells derived from it, not the whole game.
+ assert.ok(res.changed.statsUpserted>=1 && res.changed.statsUpserted<=3, JSON.stringify(res.changed));
+ assert.equal(res.changed.playersDeleted,1);
+ assert.equal(res.changed.playersUpserted,0);
+ const diffed=(await call({action:'inspect'})).body;
+ assert.equal(diffed.stats.find(s=>s.athlete_id==='4432577'&&s.stat_key==='passingYards').value,201);
+ assert.equal(diffed.stats.filter(s=>s.athlete_id===dropped).length,0);
+ assert.equal(diffed.games[0].first_captured_at,1788840000);
+
+ assert.equal((await call({action:'setup'})).status,200);
+ assert.equal((await call(input(revised,1788840100))).body.status,'inserted');
+ const scratch=(await call({action:'inspect'})).body;
+ assert.deepEqual(rows(diffed),rows(scratch));
+ assert.equal(diffed.games[0].content_hash,scratch.games[0].content_hash);
+});
