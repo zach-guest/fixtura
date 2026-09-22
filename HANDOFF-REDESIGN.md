@@ -1587,6 +1587,23 @@ written, no error. Verified: all 39 EPA objects and all 216 columns across the
 `schema.sql`; existing counts unchanged; `/health` ok. Remote D1 schema now
 matches `main`.
 
-**Exact next task:** deploy the Worker before Sunday 2026-09-27. Migrations are
-done; `npm run deploy` from a clean `main` (separately approved), then check `/health` and the next cron's `[game stats cron]`
-log line for the new `changed` counts. After that, the rest of §30 Phase 4.
+**Worker deployed from clean `main` (2026-09-22 20:30:10 UTC), version
+`6aeb079f-5c7a-48c3-8bc6-a120a47deffe`, commit `986dd49`.** Production now
+carries the capture write fix, the Pick'em `scoreWeek()` fix, and the EPA
+routes. Verified against a pre-deploy snapshot of the same requests:
+`/health` ok with `epa_import_configured: false`, `scoreboard_override: false`;
+`/stats/nfl/coverage`, `/stats/nfl/leaders`, `/stats/nfl/players/:id/games`,
+`/trends/leaders` status, cache headers and bodies unchanged (coverage differed
+only in `last_seen_at`, from a cron run in between); `/me` and `/pools` 401
+`no-store, private`; ESPN proxy 200 `max-age=30`; EPA reads
+`/stats/{nfl,cfb}/epa/coverage`, `/stats/nfl/epa/teams`, `/players` 200
+`public, max-age=300`, an unimported game 404 `no-store`; `POST
+/epa/import/nfl` without a token 503; an off-list Origin gets no CORS header.
+The first post-deploy cron (15:30:25 CDT) had no games due and wrote nothing.
+
+**Exact next task:** confirm the first cron run that rechecks a game logs
+`changed` counts in the low single digits (Workers Logs is enabled), then watch
+Sunday 2026-09-27's D1 rows-written stay under 100k. After that, the rest of
+§30 Phase 4: set `EPA_IMPORT_TOKEN` (Wrangler + Actions secret) and
+`EPA_API_BASE`, then `EPA_INGEST_ENABLED=true`, then one archived validation
+game per league. Public CFB stays gated on the attribution/data-term review.
