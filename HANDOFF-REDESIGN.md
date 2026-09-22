@@ -1512,5 +1512,26 @@ migrations 0003–0005 to remote D1 first.
 
 **Still open:** everything in §30's Phase 4 list and its trailing items.
 
-**Exact next task:** §30 Phase 4, the controlled EPA production release,
-starting with a D1 backup export. Needs explicit authorization.
+**Phase 4 step 2 done — pre-migration backup (2026-09-22 19:31 UTC).**
+`wrangler d1 export fixtura --remote` to
+`~/Documents/Fixtura-backups/fixtura-d1-2026-09-22-pre-epa.sql` (outside the
+repo on purpose: it holds users and session hashes), 3,781,619 bytes, SHA-256
+`76777c5690f17c70ef28845fc05f7f2cb49adde1a929874326c0cb8294585e31`. Verified
+by restoring into an empty SQLite database: all 12 tables match production
+row counts exactly (users 2, sessions 11, settings 4, pools 3, pool_members 3,
+picks 22, results 0, stat_snapshots 194, nfl_player_games 2,091,
+nfl_player_game_stats 16,654, nfl_stat_games 32, nfl_game_capture_state 32).
+Time Travel bookmark at export:
+`000005a7-0000000f-000050ee-cf7cb7cf91d8b65a22bb4ba68063bf91`
+(`wrangler d1 time-travel restore fixtura --bookmark=...`; free plan keeps 7
+days, so this bookmark expires around 2026-09-29).
+
+**Noticed during verification, not yet diagnosed:** production `results` has
+**0 rows** despite finished Week 1 games with picks, and `picks` (22) looks
+like Week 1's 16 plus the two test pools' 6, i.e. no Week 2 picks. Scoring is
+lazy on `/standings` reads, so an empty `results` table may just mean no
+standings read has scored yet, but it does not obviously fit the
+`scoreWeek()` write-overrun story. Check before relying on standings.
+
+**Exact next task:** §30 Phase 4 step 3, apply `0003` to remote D1 (then
+`0004`, then `0005` exactly once), each separately authorized.
