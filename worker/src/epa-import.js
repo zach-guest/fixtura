@@ -151,11 +151,17 @@ export async function handleEpaImport(request, segments, env, ctx, origin) {
     }
 
     const outcome = await ingestEpaGame(env.DB, normalized, { importedAt });
-    await recordImportState(env.DB, league, normalized.game, {
-      importedAt,
-      status: outcome.status === 'stale' || outcome.status === 'superseded' ? 'partial' : 'imported',
-      sourceHash: outcome.content_hash ?? null,
-    });
+    // A stale or superseded import stored nothing: a newer import owns this
+    // game and already recorded its own state. Writing here used to flip that
+    // row to 'partial' with a success timestamp and a null hash — bookkeeping
+    // that no longer described what the games table holds.
+    if (outcome.status !== 'stale' && outcome.status !== 'superseded') {
+      await recordImportState(env.DB, league, normalized.game, {
+        importedAt,
+        status: 'imported',
+        sourceHash: outcome.content_hash ?? null,
+      });
+    }
     results.push(outcome);
   }
 

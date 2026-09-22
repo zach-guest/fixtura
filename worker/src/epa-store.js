@@ -5,9 +5,16 @@
  * the same and one pattern in the repository is worth more than two:
  *
  *  - Every write is a single `db.batch`, so a game is never half-replaced.
- *  - Children are deleted and reinserted, guarded on the parent row's winning
- *    hash, so an older concurrent import cannot erase a newer one after its
- *    initial read.
+ *  - Only child rows that differ from what is stored are written: changed or
+ *    new rows are upserted, vanished rows deleted. The original version
+ *    deleted and reinserted every child row on any change, the same pattern
+ *    that pushed ESPN stat capture past D1's free-tier 100k rows/day
+ *    (2026-09-21); a CFB game is ~250 rows, so a season backfill or a
+ *    'healing' republish would have done the same here.
+ *  - Child writes are guarded on the parent row's winning hash, and the parent
+ *    only updates if its stored hash is still the one the diff was computed
+ *    against — otherwise the batch applies nothing and the importer re-reads,
+ *    so an overlapping import can never stack a diff on rows it did not see.
  *  - Freshness is re-asserted inside the SQL, not only in the JavaScript that
  *    read the row a moment earlier.
  *
@@ -63,15 +70,122 @@ async function contentHash(normalized) {
   });
 }
 
+/* ------------------------------------------------------------ children -- */
+
+/* Each child table: its key within a game (besides event_id), its data
+   columns, and where its rows live on the normalized payload. Column lists
+   are the table's own, so the SQL below is generated rather than hand-written
+   eight times. */
+const CHILDREN = {
+  nfl: [
+    { table: 'nfl_epa_drives', key: ['drive_id'], rows: (n) => n.drives || [],
+      cols: ['sequence', 'possession_team', 'start_period', 'start_clock', 'end_period',
+        'end_clock', 'result', 'plays', 'yards', 'epa', 'modeled_plays', 'coverage'] },
+    { table: 'nfl_epa_plays', key: ['play_id'], rows: (n) => n.plays,
+      cols: ['drive', 'quarter', 'clock', 'down', 'yards_to_go', 'yardline_100',
+        'possession_team', 'defense_team', 'play_type', 'description', 'ep_before', 'epa',
+        'qb_epa', 'success', 'is_pass', 'is_rush', 'is_dropback', 'is_sack', 'is_penalty',
+        'passer_gsis_id', 'rusher_gsis_id', 'receiver_gsis_id'] },
+    { table: 'nfl_epa_team_games', key: ['team'], rows: (n) => n.team_games,
+      cols: ['opponent', 'home_away', 'off_epa', 'off_plays', 'off_success', 'off_pass_epa',
+        'off_dropbacks', 'off_pass_success', 'off_rush_epa', 'off_designed_rushes',
+        'off_rush_success', 'def_epa', 'def_plays', 'def_pass_epa', 'def_dropbacks_faced',
+        'def_rush_epa', 'def_designed_rushes_faced', 'def_success_allowed',
+        'def_pass_success_allowed', 'def_rush_success_allowed', 'defense_sign_convention'] },
+    { table: 'nfl_epa_player_games', key: ['gsis_id', 'role'], rows: (n) => n.player_games,
+      cols: ['espn_athlete_id', 'display_name', 'team', 'epa', 'opportunities', 'successes'] },
+  ],
+  cfb: [
+    { table: 'cfb_epa_drives', key: ['drive_id'], rows: (n) => n.drives || [],
+      cols: ['sequence', 'possession_team_id', 'possession_team', 'start_period', 'start_clock',
+        'end_period', 'end_clock', 'result', 'plays', 'yards', 'epa', 'modeled_plays', 'coverage'] },
+    { table: 'cfb_epa_plays', key: ['play_id'], rows: (n) => n.plays,
+      cols: ['play_number', 'drive_id', 'period', 'clock', 'down', 'yards_to_go',
+        'yards_to_endzone', 'possession_team_id', 'possession_team', 'defense_team_id',
+        'defense_team', 'play_type', 'description', 'ep_before', 'epa', 'success', 'is_pass',
+        'is_rush', 'is_sack', 'is_penalty_no_play', 'passer_athlete_id', 'rusher_athlete_id',
+        'receiver_athlete_id'] },
+    { table: 'cfb_epa_team_games', key: ['team_id'], rows: (n) => n.team_games,
+      cols: ['team', 'opponent_id', 'opponent', 'home_away', 'conference', 'off_epa', 'off_plays',
+        'off_success', 'off_pass_epa', 'off_pass_plays', 'off_pass_success', 'off_rush_epa',
+        'off_rush_plays', 'off_rush_success', 'def_epa', 'def_plays', 'def_pass_epa',
+        'def_pass_plays_faced', 'def_rush_epa', 'def_rush_plays_faced', 'def_success_allowed',
+        'def_pass_success_allowed', 'def_rush_success_allowed', 'defense_sign_convention'] },
+    { table: 'cfb_epa_player_games', key: ['athlete_id', 'role'], rows: (n) => n.player_games,
+      cols: ['display_name', 'team_id', 'team', 'epa', 'opportunities', 'successes', 'epa_basis'] },
+  ],
+};
+
+/* What json_extract stores for a payload value: booleans become 0/1 and a
+   missing field is NULL. Compared as text so an INTEGER/REAL/TEXT round trip
+   of the same number still matches; a false "changed" only costs a write. */
+function stored(v) {
+  if (v === true) return '1';
+  if (v === false) return '0';
+  if (v === undefined || v === null) return null;
+  return String(v);
+}
+const rowKey = (spec, r) => JSON.stringify(spec.key.map((k) => stored(r[k])));
+
+/** Upserts for new/changed rows and keys for vanished rows, per child table. */
+export function diffChildren(league, normalized, existing) {
+  return CHILDREN[league].map((spec) => {
+    const old = new Map((existing?.[spec.table] || []).map((r) => [rowKey(spec, r), r]));
+    const freshKeys = new Set();
+    const upserts = [];
+    for (const r of spec.rows(normalized)) {
+      const k = rowKey(spec, r);
+      freshKeys.add(k);
+      const prev = old.get(k);
+      if (!prev || spec.cols.some((c) => stored(prev[c]) !== stored(r[c]))) upserts.push(r);
+    }
+    const deletes = [...old.entries()].filter(([k]) => !freshKeys.has(k))
+      .map(([, r]) => spec.key.map((c) => r[c]));
+    return { spec, upserts, deletes };
+  });
+}
+
+function childStatements(eventId, diffs, guard, guardArgs) {
+  const out = [];
+  for (const { spec, upserts, deletes } of diffs) {
+    if (deletes.length) {
+      const picks = spec.key.map((_, i) => `json_extract(value,'$[${i}]')`).join(', ');
+      out.push({ sql: `DELETE FROM ${spec.table} WHERE event_id = ?
+          AND (${spec.key.join(', ')}) IN (SELECT ${picks} FROM json_each(?)) AND ${guard}`,
+        params: [eventId, JSON.stringify(deletes), ...guardArgs] });
+    }
+    if (upserts.length) {
+      const all = [...spec.key, ...spec.cols];
+      // json_each keeps a table to one statement instead of hundreds of
+      // per-row INSERTs, while still binding every value. The WHERE on the
+      // SELECT is also what lets SQLite parse the ON CONFLICT clause.
+      out.push({ sql: `INSERT INTO ${spec.table} (event_id, ${all.join(', ')})
+          SELECT ?, ${all.map((c) => `json_extract(value,'$.${c}')`).join(', ')}
+          FROM json_each(?) WHERE ${guard}
+          ON CONFLICT(event_id, ${spec.key.join(', ')}) DO UPDATE SET
+            ${spec.cols.map((c) => `${c}=excluded.${c}`).join(', ')}`,
+        params: [eventId, JSON.stringify(upserts), ...guardArgs] });
+    }
+  }
+  return out;
+}
+
+async function storedChildren(db, league, eventId) {
+  const out = {};
+  for (const spec of CHILDREN[league]) {
+    const { results } = await db.prepare(
+      `SELECT ${[...spec.key, ...spec.cols].join(', ')} FROM ${spec.table} WHERE event_id = ?`
+    ).bind(eventId).all();
+    out[spec.table] = results || [];
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ NFL -- */
 
-function nflStatements(n, hash, at) {
+function nflGameStatement(n, hash, at, expectedHash) {
   const g = n.game;
-  const guard = `EXISTS (SELECT 1 FROM nfl_epa_games WHERE event_id = ? AND imported_at = ? AND source_hash = ?)`;
-  const guardArgs = [g.event_id, at, hash];
-
-  return [
-    {
+  return {
       sql: `INSERT INTO nfl_epa_games
         (event_id, nflverse_game_id, season, season_type, week, home_team, away_team, gameday,
          overtime, source_url, source_version, source_updated_at, source_hash, parser_version,
@@ -89,100 +203,22 @@ function nflStatements(n, hash, at) {
           eligible_plays=excluded.eligible_plays, modeled_plays=excluded.modeled_plays,
           eligible_drives=excluded.eligible_drives, complete_drives=excluded.complete_drives,
           model=excluded.model, model_version=excluded.model_version
-        WHERE excluded.imported_at >= nfl_epa_games.imported_at
+        WHERE nfl_epa_games.source_hash = ?
+          AND excluded.imported_at >= nfl_epa_games.imported_at
           AND NOT (nfl_epa_games.coverage = 'complete' AND excluded.coverage <> 'complete')`,
       params: [g.event_id, g.nflverse_game_id, g.season, g.season_type, g.week, g.home_team,
         g.away_team, g.gameday, g.overtime, g.source_url, g.source_updated_at, hash,
         g.parser_version, g.predicate_version, at, at, g.coverage, JSON.stringify(n.warnings),
         g.eligible_plays ?? null, g.modeled_plays ?? null, g.eligible_drives ?? null,
-        g.complete_drives ?? null, g.model ?? null, g.model_version ?? null],
-    },
-    { sql: `DELETE FROM nfl_epa_plays WHERE event_id = ? AND ${guard}`, params: [g.event_id, ...guardArgs] },
-    { sql: `DELETE FROM nfl_epa_team_games WHERE event_id = ? AND ${guard}`, params: [g.event_id, ...guardArgs] },
-    { sql: `DELETE FROM nfl_epa_player_games WHERE event_id = ? AND ${guard}`, params: [g.event_id, ...guardArgs] },
-    { sql: `DELETE FROM nfl_epa_drives WHERE event_id = ? AND ${guard}`, params: [g.event_id, ...guardArgs] },
-    {
-      sql: `INSERT INTO nfl_epa_drives
-        (event_id, drive_id, sequence, possession_team, start_period, start_clock, end_period,
-         end_clock, result, plays, yards, epa, modeled_plays, coverage)
-        SELECT ?, json_extract(value,'$.drive_id'), json_extract(value,'$.sequence'),
-          json_extract(value,'$.possession_team'), json_extract(value,'$.start_period'),
-          json_extract(value,'$.start_clock'), json_extract(value,'$.end_period'),
-          json_extract(value,'$.end_clock'), json_extract(value,'$.result'),
-          json_extract(value,'$.plays'), json_extract(value,'$.yards'),
-          json_extract(value,'$.epa'), json_extract(value,'$.modeled_plays'),
-          json_extract(value,'$.coverage')
-        FROM json_each(?) WHERE ${guard}`,
-      params: [g.event_id, JSON.stringify(n.drives || []), ...guardArgs],
-    },
-    // json_each keeps a game to a handful of statements instead of hundreds of
-    // per-row INSERTs, while still binding every value.
-    {
-      sql: `INSERT INTO nfl_epa_plays
-        (event_id, play_id, drive, quarter, clock, down, yards_to_go, yardline_100,
-         possession_team, defense_team, play_type, description, ep_before, epa, qb_epa, success,
-         is_pass, is_rush, is_dropback, is_sack, is_penalty, passer_gsis_id, rusher_gsis_id,
-         receiver_gsis_id)
-        SELECT ?, json_extract(value,'$.play_id'), json_extract(value,'$.drive'),
-          json_extract(value,'$.quarter'), json_extract(value,'$.clock'),
-          json_extract(value,'$.down'), json_extract(value,'$.yards_to_go'),
-          json_extract(value,'$.yardline_100'), json_extract(value,'$.possession_team'),
-          json_extract(value,'$.defense_team'), json_extract(value,'$.play_type'),
-          json_extract(value,'$.description'), json_extract(value,'$.ep_before'),
-          json_extract(value,'$.epa'), json_extract(value,'$.qb_epa'),
-          json_extract(value,'$.success'), json_extract(value,'$.is_pass'),
-          json_extract(value,'$.is_rush'), json_extract(value,'$.is_dropback'),
-          json_extract(value,'$.is_sack'), json_extract(value,'$.is_penalty'),
-          json_extract(value,'$.passer_gsis_id'), json_extract(value,'$.rusher_gsis_id'),
-          json_extract(value,'$.receiver_gsis_id')
-        FROM json_each(?) WHERE ${guard}`,
-      params: [g.event_id, JSON.stringify(n.plays), ...guardArgs],
-    },
-    {
-      sql: `INSERT INTO nfl_epa_team_games
-        (event_id, team, opponent, home_away, off_epa, off_plays, off_success, off_pass_epa,
-         off_dropbacks, off_pass_success, off_rush_epa, off_designed_rushes, off_rush_success,
-         def_epa, def_plays, def_pass_epa, def_dropbacks_faced, def_rush_epa,
-         def_designed_rushes_faced, def_success_allowed, def_pass_success_allowed,
-         def_rush_success_allowed, defense_sign_convention)
-        SELECT ?, json_extract(value,'$.team'), json_extract(value,'$.opponent'),
-          json_extract(value,'$.home_away'), json_extract(value,'$.off_epa'),
-          json_extract(value,'$.off_plays'), json_extract(value,'$.off_success'),
-          json_extract(value,'$.off_pass_epa'), json_extract(value,'$.off_dropbacks'),
-          json_extract(value,'$.off_pass_success'), json_extract(value,'$.off_rush_epa'),
-          json_extract(value,'$.off_designed_rushes'), json_extract(value,'$.off_rush_success'),
-          json_extract(value,'$.def_epa'), json_extract(value,'$.def_plays'),
-          json_extract(value,'$.def_pass_epa'), json_extract(value,'$.def_dropbacks_faced'),
-          json_extract(value,'$.def_rush_epa'), json_extract(value,'$.def_designed_rushes_faced'),
-          json_extract(value,'$.def_success_allowed'),
-          json_extract(value,'$.def_pass_success_allowed'),
-          json_extract(value,'$.def_rush_success_allowed'),
-          json_extract(value,'$.defense_sign_convention')
-        FROM json_each(?) WHERE ${guard}`,
-      params: [g.event_id, JSON.stringify(n.team_games), ...guardArgs],
-    },
-    {
-      sql: `INSERT INTO nfl_epa_player_games
-        (event_id, gsis_id, espn_athlete_id, display_name, team, role, epa, opportunities, successes)
-        SELECT ?, json_extract(value,'$.gsis_id'), json_extract(value,'$.espn_athlete_id'),
-          json_extract(value,'$.display_name'), json_extract(value,'$.team'),
-          json_extract(value,'$.role'), json_extract(value,'$.epa'),
-          json_extract(value,'$.opportunities'), json_extract(value,'$.successes')
-        FROM json_each(?) WHERE ${guard}`,
-      params: [g.event_id, JSON.stringify(n.player_games), ...guardArgs],
-    },
-  ];
+        g.complete_drives ?? null, g.model ?? null, g.model_version ?? null, expectedHash],
+  };
 }
 
 /* ------------------------------------------------------------------ CFB -- */
 
-function cfbStatements(n, hash, at) {
+function cfbGameStatement(n, hash, at, expectedHash) {
   const g = n.game;
-  const guard = `EXISTS (SELECT 1 FROM cfb_epa_games WHERE event_id = ? AND imported_at = ? AND source_hash = ?)`;
-  const guardArgs = [g.event_id, at, hash];
-
-  return [
-    {
+  return {
       sql: `INSERT INTO cfb_epa_games
         (event_id, season, season_type, week, home_team_id, away_team_id, source_dataset,
          source_url, source_release_timestamp, source_hash, parser_version, predicate_version,
@@ -201,7 +237,8 @@ function cfbStatements(n, hash, at) {
           eligible_plays=excluded.eligible_plays, modeled_plays=excluded.modeled_plays,
           eligible_drives=excluded.eligible_drives, complete_drives=excluded.complete_drives,
           model_version=excluded.model_version
-        WHERE excluded.imported_at >= cfb_epa_games.imported_at
+        WHERE cfb_epa_games.source_hash = ?
+          AND excluded.imported_at >= cfb_epa_games.imported_at
           AND NOT (cfb_epa_games.coverage = 'complete' AND excluded.coverage <> 'complete')
           -- A completed capture is never replaced by an incomplete one. The
           -- validator already refuses incomplete payloads; this is the same
@@ -211,102 +248,28 @@ function cfbStatements(n, hash, at) {
         g.source_dataset, g.source_url, g.source_release_timestamp, hash, g.parser_version,
         g.predicate_version, g.model, g.source_says_completed, at, at, g.coverage,
         JSON.stringify(n.warnings), g.eligible_plays ?? null, g.modeled_plays ?? null,
-        g.eligible_drives ?? null, g.complete_drives ?? null, g.model_version ?? null],
-    },
-    { sql: `DELETE FROM cfb_epa_plays WHERE event_id = ? AND ${guard}`, params: [g.event_id, ...guardArgs] },
-    { sql: `DELETE FROM cfb_epa_team_games WHERE event_id = ? AND ${guard}`, params: [g.event_id, ...guardArgs] },
-    { sql: `DELETE FROM cfb_epa_player_games WHERE event_id = ? AND ${guard}`, params: [g.event_id, ...guardArgs] },
-    { sql: `DELETE FROM cfb_epa_drives WHERE event_id = ? AND ${guard}`, params: [g.event_id, ...guardArgs] },
-    {
-      sql: `INSERT INTO cfb_epa_drives
-        (event_id, drive_id, sequence, possession_team_id, possession_team, start_period,
-         start_clock, end_period, end_clock, result, plays, yards, epa, modeled_plays, coverage)
-        SELECT ?, json_extract(value,'$.drive_id'), json_extract(value,'$.sequence'),
-          json_extract(value,'$.possession_team_id'), json_extract(value,'$.possession_team'),
-          json_extract(value,'$.start_period'), json_extract(value,'$.start_clock'),
-          json_extract(value,'$.end_period'), json_extract(value,'$.end_clock'),
-          json_extract(value,'$.result'), json_extract(value,'$.plays'),
-          json_extract(value,'$.yards'), json_extract(value,'$.epa'),
-          json_extract(value,'$.modeled_plays'), json_extract(value,'$.coverage')
-        FROM json_each(?) WHERE ${guard}`,
-      params: [g.event_id, JSON.stringify(n.drives || []), ...guardArgs],
-    },
-    {
-      sql: `INSERT INTO cfb_epa_plays
-        (event_id, play_id, play_number, drive_id, period, clock, down, yards_to_go,
-         yards_to_endzone, possession_team_id, possession_team, defense_team_id, defense_team,
-         play_type, description, ep_before, epa, success, is_pass, is_rush, is_sack,
-         is_penalty_no_play, passer_athlete_id, rusher_athlete_id, receiver_athlete_id)
-        SELECT ?, json_extract(value,'$.play_id'), json_extract(value,'$.play_number'),
-          json_extract(value,'$.drive_id'), json_extract(value,'$.period'),
-          json_extract(value,'$.clock'), json_extract(value,'$.down'),
-          json_extract(value,'$.yards_to_go'), json_extract(value,'$.yards_to_endzone'),
-          json_extract(value,'$.possession_team_id'), json_extract(value,'$.possession_team'),
-          json_extract(value,'$.defense_team_id'), json_extract(value,'$.defense_team'),
-          json_extract(value,'$.play_type'), json_extract(value,'$.description'),
-          json_extract(value,'$.ep_before'), json_extract(value,'$.epa'),
-          json_extract(value,'$.success'), json_extract(value,'$.is_pass'),
-          json_extract(value,'$.is_rush'), json_extract(value,'$.is_sack'),
-          json_extract(value,'$.is_penalty_no_play'), json_extract(value,'$.passer_athlete_id'),
-          json_extract(value,'$.rusher_athlete_id'), json_extract(value,'$.receiver_athlete_id')
-        FROM json_each(?) WHERE ${guard}`,
-      params: [g.event_id, JSON.stringify(n.plays), ...guardArgs],
-    },
-    {
-      sql: `INSERT INTO cfb_epa_team_games
-        (event_id, team_id, team, opponent_id, opponent, home_away, conference, off_epa,
-         off_plays, off_success, off_pass_epa, off_pass_plays, off_pass_success, off_rush_epa,
-         off_rush_plays, off_rush_success, def_epa, def_plays, def_pass_epa,
-         def_pass_plays_faced, def_rush_epa, def_rush_plays_faced, def_success_allowed,
-         def_pass_success_allowed, def_rush_success_allowed, defense_sign_convention)
-        SELECT ?, json_extract(value,'$.team_id'), json_extract(value,'$.team'),
-          json_extract(value,'$.opponent_id'), json_extract(value,'$.opponent'),
-          json_extract(value,'$.home_away'), json_extract(value,'$.conference'),
-          json_extract(value,'$.off_epa'), json_extract(value,'$.off_plays'),
-          json_extract(value,'$.off_success'), json_extract(value,'$.off_pass_epa'),
-          json_extract(value,'$.off_pass_plays'), json_extract(value,'$.off_pass_success'),
-          json_extract(value,'$.off_rush_epa'), json_extract(value,'$.off_rush_plays'),
-          json_extract(value,'$.off_rush_success'), json_extract(value,'$.def_epa'),
-          json_extract(value,'$.def_plays'), json_extract(value,'$.def_pass_epa'),
-          json_extract(value,'$.def_pass_plays_faced'), json_extract(value,'$.def_rush_epa'),
-          json_extract(value,'$.def_rush_plays_faced'), json_extract(value,'$.def_success_allowed'),
-          json_extract(value,'$.def_pass_success_allowed'),
-          json_extract(value,'$.def_rush_success_allowed'),
-          json_extract(value,'$.defense_sign_convention')
-        FROM json_each(?) WHERE ${guard}`,
-      params: [g.event_id, JSON.stringify(n.team_games), ...guardArgs],
-    },
-    {
-      sql: `INSERT INTO cfb_epa_player_games
-        (event_id, athlete_id, display_name, team_id, team, role, epa, opportunities, successes,
-         epa_basis)
-        SELECT ?, json_extract(value,'$.athlete_id'), json_extract(value,'$.display_name'),
-          json_extract(value,'$.team_id'), json_extract(value,'$.team'),
-          json_extract(value,'$.role'), json_extract(value,'$.epa'),
-          json_extract(value,'$.opportunities'), json_extract(value,'$.successes'),
-          json_extract(value,'$.epa_basis')
-        FROM json_each(?) WHERE ${guard}`,
-      params: [g.event_id, JSON.stringify(n.player_games), ...guardArgs],
-    },
-  ];
+        g.eligible_drives ?? null, g.complete_drives ?? null, g.model_version ?? null, expectedHash],
+  };
 }
 
 /* ---------------------------------------------------------------- ingest -- */
 
 const TABLES = {
-  nfl: { games: 'nfl_epa_games', statements: nflStatements },
-  cfb: { games: 'cfb_epa_games', statements: cfbStatements },
+  nfl: { games: 'nfl_epa_games', gameStatement: nflGameStatement },
+  cfb: { games: 'cfb_epa_games', gameStatement: cfbGameStatement },
 };
+
+const MAX_WRITE_ATTEMPTS = 3;
 
 /**
  * Store one validated game. Returns a status rather than throwing for the
  * ordinary outcomes, so an importer can report them per game.
  *
  *   inserted   — new game
- *   updated    — a correction replaced it atomically
+ *   updated    — a correction applied atomically (only the rows that changed)
  *   unchanged  — identical data; nothing written
  *   stale      — an older import arrived after a newer one
- *   superseded — a concurrent writer won the race; nothing of ours was stored
+ *   superseded — a concurrent writer kept winning; nothing of ours was stored
  */
 export async function ingestEpaGame(db, normalized, { importedAt }) {
   const league = normalized.league;
@@ -315,30 +278,42 @@ export async function ingestEpaGame(db, normalized, { importedAt }) {
 
   const hash = await contentHash(normalized);
   const eventId = normalized.game.event_id;
+  const guard = `EXISTS (SELECT 1 FROM ${spec.games} WHERE event_id = ? AND imported_at = ? AND source_hash = ?)`;
+  const guardArgs = [eventId, importedAt, hash];
 
-  const existing = await db.prepare(
-    `SELECT imported_at, source_hash, coverage FROM ${spec.games} WHERE event_id = ?`
-  ).bind(eventId).first();
+  for (let attempt = 1; ; attempt += 1) {
+    const existing = await db.prepare(
+      `SELECT imported_at, source_hash, coverage FROM ${spec.games} WHERE event_id = ?`
+    ).bind(eventId).first();
 
-  if (existing) {
-    if (importedAt < existing.imported_at) return { status: 'stale', league, event_id: eventId };
-    if (existing.source_hash === hash) return { status: 'unchanged', league, event_id: eventId, content_hash: hash };
+    if (existing) {
+      if (importedAt < existing.imported_at) return { status: 'stale', league, event_id: eventId };
+      if (existing.source_hash === hash) return { status: 'unchanged', league, event_id: eventId, content_hash: hash };
+    }
+
+    const diffs = diffChildren(league, normalized, existing ? await storedChildren(db, league, eventId) : null);
+    // '' never matches a stored hash, so "we saw no row" loses to a row that
+    // appeared in the meantime rather than merging with it.
+    const statements = [spec.gameStatement(normalized, hash, importedAt, existing?.source_hash ?? ''),
+      ...childStatements(eventId, diffs, guard, guardArgs)];
+    const result = await db.batch(statements.map((s) => db.prepare(s.sql).bind(...s.params)));
+    if (result[0]?.meta?.changes === 0) {
+      if (attempt < MAX_WRITE_ATTEMPTS) continue;
+      return { status: 'superseded', league, event_id: eventId };
+    }
+
+    return {
+      status: existing ? 'updated' : 'inserted',
+      league,
+      event_id: eventId,
+      content_hash: hash,
+      plays: normalized.plays.length,
+      drives: (normalized.drives || []).length,
+      team_games: normalized.team_games.length,
+      player_games: normalized.player_games.length,
+      changed: Object.fromEntries(diffs.map((d) => [d.spec.table, { upserted: d.upserts.length, deleted: d.deletes.length }])),
+    };
   }
-
-  const statements = spec.statements(normalized, hash, importedAt);
-  const result = await db.batch(statements.map((s) => db.prepare(s.sql).bind(...s.params)));
-  if (result[0]?.meta?.changes === 0) return { status: 'superseded', league, event_id: eventId };
-
-  return {
-    status: existing ? 'updated' : 'inserted',
-    league,
-    event_id: eventId,
-    content_hash: hash,
-    plays: normalized.plays.length,
-    drives: (normalized.drives || []).length,
-    team_games: normalized.team_games.length,
-    player_games: normalized.player_games.length,
-  };
 }
 
 /** Record the attempt, including failures. Never references the games table:

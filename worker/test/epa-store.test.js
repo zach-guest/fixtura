@@ -221,3 +221,78 @@ test('deleting a game cascades to every child row', async () => {
   db.prepare('DELETE FROM cfb_epa_games WHERE event_id = ?').run('401856634');
   assert.deepEqual(counts(db, 'cfb'), { games: 0, plays: 0, teams: 0, players: 0 });
 });
+
+/* Every child row of one league's game, keyed and ordered, for comparing two
+   databases row for row. */
+function childRows(db, league) {
+  const out = {};
+  for (const t of ['plays', 'team_games', 'player_games', 'drives']) {
+    out[t] = db.prepare(`SELECT * FROM ${league}_epa_${t} ORDER BY 1, 2, 3`).all()
+      .map((r) => JSON.stringify(r, Object.keys(r).sort()));
+  }
+  return out;
+}
+
+test('a correction writes only the rows that changed and ends identical to a fresh import', async () => {
+  const original = nflPayload({
+    plays: [
+      nflPlay(),
+      nflPlay({ play_id: '2', possession_team: 'MIN', defense_team: 'CHI', epa: -0.4, qb_epa: -0.4, success: 0, passer_gsis_id: '00-0039923' }),
+      nflPlay({ play_id: '3', epa: 0.1, qb_epa: 0.1, success: 0 }),
+    ],
+  });
+  // Play 1 corrected, play 3 removed by the provider, play 2 untouched.
+  const corrected = nflPayload({
+    plays: [
+      nflPlay({ epa: 0.9, qb_epa: 0.9 }),
+      nflPlay({ play_id: '2', possession_team: 'MIN', defense_team: 'CHI', epa: -0.4, qb_epa: -0.4, success: 0, passer_gsis_id: '00-0039923' }),
+    ],
+  });
+
+  const a = fresh();
+  await ingestEpaGame(a.DB, validateNflEpaPayload(original), { importedAt: 1000 });
+  const out = await ingestEpaGame(a.DB, validateNflEpaPayload(corrected), { importedAt: 2000 });
+  assert.equal(out.status, 'updated');
+  assert.deepEqual(out.changed.nfl_epa_plays, { upserted: 1, deleted: 1 }, 'only play 1 rewritten, play 3 deleted');
+
+  const b = fresh();
+  await ingestEpaGame(b.DB, validateNflEpaPayload(corrected), { importedAt: 2000 });
+  assert.deepEqual(childRows(a.db, 'nfl'), childRows(b.db, 'nfl'));
+  assert.equal(a.db.prepare('SELECT source_hash FROM nfl_epa_games').get().source_hash,
+    b.db.prepare('SELECT source_hash FROM nfl_epa_games').get().source_hash);
+});
+
+test('CFB: a correction diff ends identical to a fresh import, big play ids included', async () => {
+  const base = cfbPayload();
+  const corrected = cfbPayload({ plays: [{ ...base.plays[0], epa: 0.75 }] });
+  const a = fresh();
+  await ingestEpaGame(a.DB, validateCfbEpaPayload(base), { importedAt: 1000 });
+  const out = await ingestEpaGame(a.DB, validateCfbEpaPayload(corrected), { importedAt: 2000 });
+  assert.equal(out.status, 'updated');
+  assert.deepEqual(out.changed.cfb_epa_plays, { upserted: 1, deleted: 1 });
+  const b = fresh();
+  await ingestEpaGame(b.DB, validateCfbEpaPayload(corrected), { importedAt: 2000 });
+  assert.deepEqual(childRows(a.db, 'cfb'), childRows(b.db, 'cfb'));
+  assert.equal(a.db.prepare('SELECT play_id FROM cfb_epa_plays').get().play_id, BIG_PLAY_ID);
+});
+
+test('a diff computed against rows that changed underneath it is re-read, not stacked', async () => {
+  const { db, DB } = fresh();
+  await ingestEpaGame(DB, validateNflEpaPayload(nflPayload()), { importedAt: 1000 });
+  // Simulate another import landing between our read and our batch: the
+  // first batch this ingest sends sees a different stored hash.
+  // It changes play 2, which OUR diff (computed before it landed) treats as
+  // unchanged — so only a re-read can put play 2 back to what we are importing.
+  const other = nflPayload({ plays: [nflPlay(), nflPlay({ play_id: '2', possession_team: 'MIN', defense_team: 'CHI', epa: -1.5, qb_epa: -1.5, success: 0, passer_gsis_id: '00-0039923' })] });
+  let interleaved = false;
+  const racing = { ...DB, batch: async (stmts) => {
+    if (!interleaved) { interleaved = true; await ingestEpaGame(DB, validateNflEpaPayload(other), { importedAt: 1500 }); }
+    return DB.batch(stmts);
+  } };
+  const mine = nflPayload({ plays: [nflPlay({ epa: 0.9, qb_epa: 0.9 }), nflPlay({ play_id: '2', possession_team: 'MIN', defense_team: 'CHI', epa: -0.4, qb_epa: -0.4, success: 0, passer_gsis_id: '00-0039923' })] });
+  const out = await ingestEpaGame(racing, validateNflEpaPayload(mine), { importedAt: 2000 });
+  assert.equal(out.status, 'updated');
+  const b = fresh();
+  await ingestEpaGame(b.DB, validateNflEpaPayload(mine), { importedAt: 2000 });
+  assert.deepEqual(childRows(db, 'nfl'), childRows(b.db, 'nfl'));
+});
