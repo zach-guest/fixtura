@@ -1,0 +1,187 @@
+# Scheduled EPA ingestion — NFL and college football.
+#
+# NOT ACTIVE YET. Every job is gated on the repository variable
+# EPA_INGEST_ENABLED being exactly 'true'. Until someone sets it, a scheduled
+# run does nothing and a manual run reports that it is disabled. This is
+# deliberate: the file can land in the repository without starting to write to
+# production the moment it is pushed.
+#
+# To activate, set (all in the repository's own settings, never in this file):
+#   secret   EPA_IMPORT_TOKEN   the Worker's import token
+#   variable EPA_API_BASE       https://fixtura-api.fixturaapp.workers.dev
+#   variable EPA_INGEST_ENABLED true
+#
+# The two leagues are INDEPENDENT jobs on purpose. They read different
+# upstreams with different publication windows and different failure modes; a
+# college source that has not republished must not stop the NFL import, and a
+# malformed NFL week must not mark the college run failed.
+
+name: EPA ingest
+
+on:
+  schedule:
+    # After nflverse's nightly processing window. Tuesday's run is the one that
+    # picks up NFL stat corrections, which nflverse folds in by then.
+    - cron: '30 11 * * *'
+  workflow_dispatch:
+    inputs:
+      league:
+        description: Which league to run
+        type: choice
+        options: [both, nfl, cfb]
+        default: both
+      season:
+        description: Season year (blank = the configured current season)
+        type: string
+      mode:
+        description: season | week | game
+        type: choice
+        options: [season, week, game]
+        default: season
+      week:
+        description: Week number (mode=week)
+        type: string
+      game:
+        description: One game id (mode=game)
+        type: string
+      dry_run:
+        description: Normalize and report, upload nothing
+        type: boolean
+        default: true
+      server_dry_run:
+        description: Upload with ?dryRun=1 so the Worker validates without storing
+        type: boolean
+        default: false
+      recheck_weeks:
+        description: >-
+          CFB only. Cap the truncated-game recheck to the last N incomplete
+          weeks. LEAVE BLANK unless the upstream healing behaviour has been
+          measured -- blank rechecks every incomplete week, which is the
+          conservative choice while it is unknown. See DECISIONS.md.
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # One ingest at a time per league, and never cancel one in flight: a
+  # half-finished import is worse than a late one.
+  group: epa-ingest-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CURRENT_NFL_SEASON: '2026'
+  CURRENT_CFB_SEASON: '2026'
+
+jobs:
+  nfl:
+    if: >-
+      vars.EPA_INGEST_ENABLED == 'true' &&
+      (github.event_name == 'schedule' || inputs.league == 'both' || inputs.league == 'nfl')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pinned dependencies
+        working-directory: worker/scripts/epa
+        # --require-hashes: pip refuses anything not pinned by hash in
+        # requirements.txt, so a re-uploaded release cannot substitute itself.
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+
+      - name: Ingest
+        working-directory: worker/scripts/epa
+        env:
+          EPA_IMPORT_TOKEN: ${{ secrets.EPA_IMPORT_TOKEN }}
+        run: |
+          set -o pipefail
+          season="${{ inputs.season }}"
+          [ -z "$season" ] && season="$CURRENT_NFL_SEASON"
+          args=(--league nfl --season "$season" --mode "${{ inputs.mode || 'season' }}"
+                --report artifacts/nfl-report.json)
+          [ -n "${{ inputs.week }}" ] && args+=(--week "${{ inputs.week }}")
+          [ -n "${{ inputs.game }}" ] && args+=(--game "${{ inputs.game }}")
+          if [ "${{ inputs.dry_run }}" = "true" ] || [ -z "$EPA_IMPORT_TOKEN" ]; then
+            args+=(--dry-run)
+          else
+            args+=(--target "${{ vars.EPA_API_BASE }}")
+            [ "${{ inputs.server_dry_run }}" = "true" ] && args+=(--server-dry-run)
+          fi
+          python ingest.py "${args[@]}"
+          status=$?
+          # 3 means "nothing to ingest" -- an unpublished season asset or an
+          # empty week. That is the normal state of the world out of season and
+          # must not page anyone.
+          if [ $status -eq 3 ]; then echo "nothing to ingest"; exit 0; fi
+          exit $status
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: epa-nfl-report-${{ github.run_id }}
+          path: worker/scripts/epa/artifacts/
+          if-no-files-found: warn
+          retention-days: 30
+
+  cfb:
+    if: >-
+      vars.EPA_INGEST_ENABLED == 'true' &&
+      (github.event_name == 'schedule' || inputs.league == 'both' || inputs.league == 'cfb')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # No `needs:` on purpose. College is independent of the NFL job: different
+    # upstream, different publication window, different failure modes.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pinned dependencies
+        working-directory: worker/scripts/epa
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+
+      - name: Ingest
+        working-directory: worker/scripts/epa
+        env:
+          EPA_IMPORT_TOKEN: ${{ secrets.EPA_IMPORT_TOKEN }}
+        run: |
+          set -o pipefail
+          season="${{ inputs.season }}"
+          [ -z "$season" ] && season="$CURRENT_CFB_SEASON"
+          args=(--league cfb --season "$season" --mode "${{ inputs.mode || 'season' }}"
+                --report artifacts/cfb-report.json)
+          [ -n "${{ inputs.week }}" ] && args+=(--week "${{ inputs.week }}")
+          [ -n "${{ inputs.game }}" ] && args+=(--game "${{ inputs.game }}")
+          # Blank recheck_weeks means "every incomplete week". Do not put a
+          # number here until the healing behaviour is measured.
+          [ -n "${{ inputs.recheck_weeks }}" ] && args+=(--recheck-weeks "${{ inputs.recheck_weeks }}")
+          if [ "${{ inputs.dry_run }}" = "true" ] || [ -z "$EPA_IMPORT_TOKEN" ]; then
+            args+=(--dry-run)
+          else
+            args+=(--target "${{ vars.EPA_API_BASE }}")
+            [ "${{ inputs.server_dry_run }}" = "true" ] && args+=(--server-dry-run)
+          fi
+          python ingest.py "${args[@]}"
+          status=$?
+          if [ $status -eq 3 ]; then echo "nothing to ingest"; exit 0; fi
+          exit $status
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: epa-cfb-report-${{ github.run_id }}
+          path: worker/scripts/epa/artifacts/
+          if-no-files-found: warn
+          retention-days: 30

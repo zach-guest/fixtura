@@ -1,0 +1,26 @@
+# Offline EPA ingestion tooling. Nothing here is a frontend or Worker runtime
+# dependency -- see AGENTS.md "Architecture and repository map".
+#
+# Fully pinned, with hashes, so a CI run installs exactly what was tested here
+# and a compromised or re-uploaded release cannot substitute itself. Install
+# with --require-hashes so pip refuses anything unpinned:
+#
+#     python3 -m venv .venv
+#     ./.venv/bin/pip install --require-hashes -r requirements.txt
+#
+# Hashes cover the two platforms this pipeline runs on -- local macOS arm64 and
+# CI linux x86_64 -- plus the sdist as a fallback. To regenerate after a version
+# bump, list the wheels for the new version and take their sha256:
+#
+#     python3 - <<'PY'
+#     import json, urllib.request
+#     d = json.load(urllib.request.urlopen("https://pypi.org/pypi/duckdb/<VERSION>/json"))
+#     for f in d["urls"]:
+#         print(f["filename"], f["digests"]["sha256"])
+#     PY
+#
+# duckdb 1.4.5, verified against Python 3.9.6 on macOS on 2026-09-09.
+duckdb==1.4.5 \
+    --hash=sha256:f14d34c3512a7a1533951e5b3e351adf2196ba4a9bb5f35b412fb9a82be0469c \
+    --hash=sha256:9a10292e7981a5a3472c7ceddf233ae88adf4daa47e97e3e09ea1aa6d9d300b2 \
+    --hash=sha256:783779bde612172b06c250b5f34f7fc29471833545f2894aadedbffbbcc49013
