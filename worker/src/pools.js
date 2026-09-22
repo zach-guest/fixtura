@@ -492,28 +492,31 @@ async function submitPicks(request, env, ctx, user, poolId, origin) {
  * delete-and-reinsert here that never touches what anyone actually picked.
  */
 async function scoreWeek(env, ctx, pool, week) {
-  const picked = await env.DB.prepare(
-    'SELECT COUNT(DISTINCT event_id) AS n FROM picks WHERE pool_id = ? AND week = ?'
-  ).bind(pool.id, week).first();
-  if (!picked || !picked.n) return;
+  const { results: pickedRows } = await env.DB.prepare(
+    'SELECT DISTINCT event_id FROM picks WHERE pool_id = ? AND week = ?'
+  ).bind(pool.id, week).all();
+  const picked = new Set(pickedRows.map(r => r.event_id));
+  if (!picked.size) return;
 
+  // Only games someone in this pool picked are scored. Comparing a count of ALL
+  // results against a count of PICKED games (the previous version) let results
+  // for unpicked games fill the quota, after which a picked Monday-night game
+  // was never scored at all.
   const { results: existing } = await env.DB.prepare(
     'SELECT event_id, winner_id FROM results WHERE pool_id = ? AND week = ?'
   ).bind(pool.id, week).all();
-  if (existing.length >= picked.n) return;      // every picked game already has a result
+  const scoredById = new Map(existing.map(r => [r.event_id, r.winner_id]));
+  if ([...picked].every(id => scoredById.has(id))) return;   // every picked game already has a result
 
   const { games } = await weekGames(ctx, pool, week, env);
-  const done = games.filter(g => g.final);
-  if (!done.length) return;
 
   // Only write games that are newly final or whose winner actually changed. A
   // D1 upsert still counts as a row write even when nothing changed, and this
   // function runs on every /standings read — during a live week that's every
   // pool member checking in throughout the day, so re-upserting settled games
-  // on every call burns the daily rows_written cap for no reason (this is what
-  // tripped the D1 free-tier alerts on 2026-09-21).
-  const scoredById = new Map(existing.map(r => [r.event_id, r.winner_id]));
-  const stale = done.filter(g => !scoredById.has(g.id) || scoredById.get(g.id) !== g.winner_id);
+  // on every call burns the daily rows_written cap for no reason.
+  const stale = games.filter(g => g.final && picked.has(g.id)
+    && (!scoredById.has(g.id) || scoredById.get(g.id) !== g.winner_id));
   if (!stale.length) return;
 
   await env.DB.batch(stale.map(g => env.DB.prepare(
@@ -566,7 +569,10 @@ async function standings(env, ctx, user, poolId, origin) {
                      AND p.selection_id = r.winner_id THEN 1 ELSE 0 END)  AS wins,
             SUM(CASE WHEN r.winner_id IS NOT NULL
                      AND p.selection_id <> r.winner_id THEN 1 ELSE 0 END) AS losses,
-            SUM(CASE WHEN r.winner_id IS NULL THEN 1 ELSE 0 END)          AS pushes
+            -- A push is a scored game with no winner. Without the event_id test
+            -- every not-yet-final pick (no results row) counted as a push too.
+            SUM(CASE WHEN r.event_id IS NOT NULL
+                     AND r.winner_id IS NULL THEN 1 ELSE 0 END)           AS pushes
        FROM pool_members pm
        JOIN users u  ON u.id = pm.user_id
        LEFT JOIN picks   p ON p.pool_id = pm.pool_id AND p.user_id = pm.user_id

@@ -736,6 +736,40 @@ curl -s -o $T/st2 "$B/pools/$OLDPOOL/standings" -H "Origin: $APP" -H "$A2"
 chk "re-scoring is idempotent" 16 "$($WRANGLER d1 execute fixtura --local --json \
   --command "SELECT COUNT(*) AS n FROM results WHERE pool_id=$OLDPOOL" 2>/dev/null \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)[0]["results"][0]["n"])' 2>/dev/null || echo ERR)"
+echo "== standings: a pool where members skip games =="
+# Regression: scoring used to stop once the count of ALL results reached the
+# count of PICKED games, so results for unpicked games could leave a picked
+# game unscored forever. And a push used to be any pick without a winner,
+# which counted every unscored pick (and a member with no picks) as a tie.
+jpost /pools $T/pp POST "$A2" '{"name":"Partial","season":2025,"league":"nfl"}' >/dev/null
+PPOOL=$(jq_ $T/pp "['pool']['id']")
+jpost /pools/join $T/ppj POST "$B_AUTH" "{\"code\":\"$(jq_ $T/pp "['pool']['join_code']")\"}" >/dev/null
+python3 - "$PPOOL" "$NOW" "$FIXTURES" > $T/pseed.sql <<'PY2'
+import sys,json,urllib.request
+pool,now,base=sys.argv[1],sys.argv[2],sys.argv[3]
+u=f"{base}/football/nfl/scoreboard?dates=2025&seasontype=2&week=1"
+d=json.load(urllib.request.urlopen(urllib.request.Request(u,headers={"User-Agent":"Fixtura/1.0 (+https://zach-guest.github.io/fixtura/)"})))
+decided=[e for e in d["events"] if any(x.get("winner") for x in e["competitions"][0]["competitors"])]
+# Only the LAST three decided games are picked, so every other final game in
+# the week is one nobody picked.
+for e in decided[-3:]:
+    win=[x for x in e["competitions"][0]["competitors"] if x.get("winner")][0]["team"]["id"]
+    print(f"INSERT OR REPLACE INTO picks (pool_id,user_id,event_id,week,selection_id,locks_at,created_at,updated_at) "
+          f"VALUES ({pool},(SELECT id FROM users WHERE sub='test-sub-1'),'{e['id']}',1,'{win}',0,{now},{now});")
+# Pre-seed results for three UNPICKED games, as the old code would have left
+# behind: with the old count check these alone satisfied the quota.
+for e in decided[:3]:
+    print(f"INSERT OR REPLACE INTO results (pool_id,event_id,week,winner_id,scored_at) VALUES ({pool},'{e['id']}',1,NULL,{now});")
+PY2
+$WRANGLER d1 execute fixtura --local --file=$T/pseed.sql >/dev/null 2>&1
+curl -s -o $T/pst "$B/pools/$PPOOL/standings" -H "Origin: $APP" -H "$A2"
+chk "every picked game is scored despite unpicked results" "3 0" "$(jq_ $T/pst "' '.join(str(r['wins']) for r in d['standings'] if r['name']=='Zach Guest')+' '+' '.join(str(r['losses']) for r in d['standings'] if r['name']=='Zach Guest')")"
+chk "  the picker has no phantom pushes" 0 "$(jq_ $T/pst "next(r['pushes'] for r in d['standings'] if r['name']=='Zach Guest')")"
+chk "  a member with no picks has no pushes" 0 "$(jq_ $T/pst "next(r['pushes'] for r in d['standings'] if r['name']=='Friend B')")"
+chk "  only picked games get new results" 6 "$($WRANGLER d1 execute fixtura --local --json \
+  --command "SELECT COUNT(*) AS n FROM results WHERE pool_id=$PPOOL" 2>/dev/null \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)[0]["results"][0]["n"])' 2>/dev/null || echo ERR)"
+
 echo "== confidence mode =="
 code=$(jpost /pools $T/cc POST "$A2" '{"name":"Conf Pool","season":2026,"league":"nfl","mode":"confidence"}')
 chk "create" 201 "$code"
