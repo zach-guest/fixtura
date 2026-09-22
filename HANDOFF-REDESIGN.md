@@ -1,8 +1,8 @@
 # Handoff — redesign + NFL dashboards
 
 **Current status — 2026-09-22:** see §32 first: the EPA work and a Pick'em
-hotfix that was deployed before being committed are now committed on the
-`epa-pipeline` branch (not `main`, not pushed). What follows is the
+hotfix that was deployed before being committed are now committed and merged to
+`main` (pushed 2026-09-22). What follows is the
 2026-09-09 status.
 
 **Status — 2026-09-09:** Zach reviewed the batch in §20–22 locally
@@ -1501,11 +1501,16 @@ shipped, then restored. Treat production as: 2026-09-09 Worker **plus** the
 `./test.sh` against `npm run dev:test` 244/244. Staged blobs of the two split
 files were syntax-checked separately.
 
-**Still open:** everything in §30's Phase 4 list and its trailing items; plus
-confirm the D1 free-tier alerts have stopped since the hotfix, since
-rows-written pressure is also a reason to settle the $5/mo plan question.
+**D1 alerts:** Zach confirmed on 2026-09-22 that no further D1 free-tier
+alert emails have arrived since the hotfix deploy.
 
-**Exact next task:** decide how `epa-pipeline` reaches `main`. Merging to
-`main` and pushing is safe for the frontend (no frontend file changed) and
-closes the deploy hazard in CLAUDE.md; after that, §30 Phase 4 is the next
-step and needs explicit authorization.
+**Merged:** Zach approved merging `epa-pipeline` into `main` and pushing on
+2026-09-22 (fast-forward; no frontend file changed, so the Pages deploy is a
+no-op for the app). `main` now matches production's Pick'em code, **but the
+next Worker deploy from `main` will also ship the EPA routes** — apply
+migrations 0003–0005 to remote D1 first.
+
+**Still open:** everything in §30's Phase 4 list and its trailing items.
+
+**Exact next task:** §30 Phase 4, the controlled EPA production release,
+starting with a D1 backup export. Needs explicit authorization.

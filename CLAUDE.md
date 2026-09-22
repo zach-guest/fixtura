@@ -622,17 +622,13 @@ curl https://fixtura-api.fixturaapp.workers.dev/health
 `/health` is the first thing to check after any deploy: it reports whether D1 is
 reachable and which secrets are still unset, **by name only**.
 
-> ⚠️ **Deployed-from-a-branch hazard, live as of 2026-09-22.** `wrangler deploy`
-> ships whatever is in the working directory, with no notion of branches. The
-> Pick'em write-reduction fix in `scoreWeek()` (`src/pools.js`) was deployed on
-> 2026-09-22 (version `81efe37c`) from an uncommitted tree; it is now committed
-> on the `epa-pipeline` branch but is **not on `main`**. Running
-> `npm run deploy` from `main` would silently revert it and bring back the D1
-> free-tier `rows_written` overrun. Merge `epa-pipeline` or deploy only from it.
-> (The 2026-09-07 hazard about `redesign-nfl-dashboards` is resolved: that
-> branch is merged.) Deploying `epa-pipeline` as-is also ships the EPA routes,
-> which need migrations 0003–0005 applied to remote D1 first — see
-> `HANDOFF-REDESIGN.md` §30 and §32.
+> ⚠️ **Deploy the Worker only from a clean, committed `main`.** `wrangler
+> deploy` ships whatever is in the working directory, with no notion of
+> branches or commits. This has bitten twice: the 2026-09-07 snapshot cron lived
+> only on a branch, and the 2026-09-22 Pick'em `scoreWeek()` fix was deployed
+> from an uncommitted tree (both since merged to `main`). Note `main` now also
+> carries the EPA routes, which need migrations 0003–0005 applied to remote D1
+> **before** the next Worker deploy — see `HANDOFF-REDESIGN.md` §30 and §32.
 
 The account's workers.dev subdomain is `fixturaapp`, set once at the account
 level, so every Worker deployed from this account is
