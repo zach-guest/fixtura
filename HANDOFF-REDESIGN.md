@@ -1672,7 +1672,11 @@ the scheduled run; check Workers Logs in the dashboard, or D1
 - **Zach-side, GitHub → Settings → Secrets and variables → Actions:** secret
   `EPA_IMPORT_TOKEN` (from the file), variables `EPA_API_BASE =
   https://fixtura-api.fixturaapp.workers.dev` and `EPA_INGEST_ENABLED = true`.
-  The schedule is 11:30 UTC daily.
+  The schedule is 11:30 UTC daily. **Done by Zach 2026-09-23**, and the local
+  token file deleted. Not yet verified by a run: the first scheduled (or manual)
+  `EPA ingest` run is the first proof the secret and variables are right. Check
+  its NFL report artifact and `SELECT COUNT(*) FROM nfl_epa_games` (expect 33:
+  the 32 2026 games plus the 2025 validation game).
 
 **Exact next task:** confirm the first cron run that rechecks a game logs
 `changed` counts in the low single digits (Workers Logs is enabled), then watch
