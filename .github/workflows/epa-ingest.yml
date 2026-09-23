@@ -107,11 +107,24 @@ jobs:
                 --report artifacts/nfl-report.json)
           [ -n "${{ inputs.week }}" ] && args+=(--week "${{ inputs.week }}")
           [ -n "${{ inputs.game }}" ] && args+=(--game "${{ inputs.game }}")
-          if [ "${{ inputs.dry_run }}" = "true" ] || [ -z "$EPA_IMPORT_TOKEN" ]; then
+          # A run asked to upload must upload or fail loudly. This used to fall
+          # back to a dry run when the token was empty, so a misnamed secret or
+          # a missing EPA_API_BASE produced a green run that imported nothing.
+          # Names only in these messages, never values.
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
             args+=(--dry-run)
+            echo "::notice title=EPA ingest::dry run requested; nothing uploaded"
           else
+            missing=""
+            [ -z "$EPA_IMPORT_TOKEN" ] && missing="$missing secret:EPA_IMPORT_TOKEN"
+            [ -z "${{ vars.EPA_API_BASE }}" ] && missing="$missing variable:EPA_API_BASE"
+            if [ -n "$missing" ]; then
+              echo "::error title=EPA ingest not configured::empty or not visible to this job:$missing"
+              exit 1
+            fi
             args+=(--target "${{ vars.EPA_API_BASE }}")
             [ "${{ inputs.server_dry_run }}" = "true" ] && args+=(--server-dry-run)
+            echo "::notice title=EPA ingest::uploading to ${{ vars.EPA_API_BASE }}"
           fi
           # Actions runs this with `bash -e`, so a bare non-zero exit would end
           # the step here and the exit-3 branch below could never run.
@@ -171,11 +184,24 @@ jobs:
           # Blank recheck_weeks means "every incomplete week". Do not put a
           # number here until the healing behaviour is measured.
           [ -n "${{ inputs.recheck_weeks }}" ] && args+=(--recheck-weeks "${{ inputs.recheck_weeks }}")
-          if [ "${{ inputs.dry_run }}" = "true" ] || [ -z "$EPA_IMPORT_TOKEN" ]; then
+          # A run asked to upload must upload or fail loudly. This used to fall
+          # back to a dry run when the token was empty, so a misnamed secret or
+          # a missing EPA_API_BASE produced a green run that imported nothing.
+          # Names only in these messages, never values.
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
             args+=(--dry-run)
+            echo "::notice title=EPA ingest::dry run requested; nothing uploaded"
           else
+            missing=""
+            [ -z "$EPA_IMPORT_TOKEN" ] && missing="$missing secret:EPA_IMPORT_TOKEN"
+            [ -z "${{ vars.EPA_API_BASE }}" ] && missing="$missing variable:EPA_API_BASE"
+            if [ -n "$missing" ]; then
+              echo "::error title=EPA ingest not configured::empty or not visible to this job:$missing"
+              exit 1
+            fi
             args+=(--target "${{ vars.EPA_API_BASE }}")
             [ "${{ inputs.server_dry_run }}" = "true" ] && args+=(--server-dry-run)
+            echo "::notice title=EPA ingest::uploading to ${{ vars.EPA_API_BASE }}"
           fi
           # Actions runs this with `bash -e`, so a bare non-zero exit would end
           # the step here and the exit-3 branch below could never run.
