@@ -1601,7 +1601,7 @@ only in `last_seen_at`, from a cron run in between); `/me` and `/pools` 401
 /epa/import/nfl` without a token 503; an off-list Origin gets no CORS header.
 The first post-deploy cron (15:30:25 CDT) had no games due and wrote nothing.
 
-### Code review fixes — 2026-09-22 (committed, NOT deployed or pushed)
+### Code review fixes — 2026-09-22 (deployed 2026-09-23)
 
 A whole-repo review found nine issues; all are fixed in commits `0557b93`..
 `da36ae5` plus this docs commit:
@@ -1633,6 +1633,17 @@ matching nonce accepted and consumed, all tabs load, no module errors).
 (`npm run deploy` from clean `main`) **before** `git push`, or sign-in fails
 for anyone on the new frontend until the Worker catches up. The Worker change is
 backward compatible with the current frontend.
+
+**Deployed 2026-09-23, Worker first:** Worker version
+`3623aaa8-9e3f-4387-a50f-acf11e351e8a` from clean `main` at `c26160f`, then
+`git push` (`42420b0..c26160f`); Pages served the new modules ~50s later.
+Verified: `/health` ok and `proxy_routes` no longer lists `odds`; `/odds/...`
+404; `/auth/google/start` carries a supplied nonce in the signed state, refuses a
+malformed one (400), and still redirects without one (older cached app);
+`/me`/`/pools` 401 signed out; stats, EPA, trends and ESPN proxy routes 200. Live
+site in a browser: 7 tabs, 21 modules, no console errors. A full real Google
+sign-in round trip was not exercised by the agent — Zach's next sign-in is the
+first end-to-end test of the nonce path.
 
 Unverified: the first post-deploy capture run's `changed` counts. The
 `wrangler tail` left running through 16:00 CDT captured only a fetch event, not
