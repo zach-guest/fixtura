@@ -132,9 +132,12 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  # College has a second switch, off unless EPA_CFB_ENABLED is 'true': the
+  # /stats/cfb/epa routes are public, and public CFB EPA stays gated on the
+  # source's attribution and data-terms review (HANDOFF-REDESIGN.md §30 step 7).
   cfb:
     if: >-
-      vars.EPA_INGEST_ENABLED == 'true' &&
+      vars.EPA_INGEST_ENABLED == 'true' && vars.EPA_CFB_ENABLED == 'true' &&
       (github.event_name == 'schedule' || inputs.league == 'both' || inputs.league == 'cfb')
     runs-on: ubuntu-latest
     timeout-minutes: 45

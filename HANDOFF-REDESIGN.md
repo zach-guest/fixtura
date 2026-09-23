@@ -1650,6 +1650,30 @@ Unverified: the first post-deploy capture run's `changed` counts. The
 the scheduled run; check Workers Logs in the dashboard, or D1
 `nfl_game_capture_state.last_attempt_at`, instead.
 
+### EPA import enabled (Phase 4 steps 5–6) — 2026-09-23
+
+- `EPA_IMPORT_TOKEN` generated (`openssl rand -base64 48`, never printed) and set
+  as a Wrangler secret; `/health` reports `epa_import_configured: true`. The
+  value sits in `~/Documents/Fixtura-backups/epa-import-token.txt` (mode 600,
+  outside the repo) for Zach to paste into the GitHub Actions secret; delete it
+  afterwards — it can always be rotated with a new `wrangler secret put`.
+- **Validation imports into production:** NFL `401772810` (2025 wk 1): inserted,
+  122 modeled plays / 27 drives, read back via `/stats/nfl/epa/games/…`, a
+  re-import returned `unchanged`. CFB `401856634` (2026 wk 1): inserted, 120/146
+  plays, 23 drives, read back.
+- **First-run size, from a dry run of both 2026 seasons:** 32 NFL games (~5.1k
+  rows) and 53 CFB games (~9.1k rows), ~50k D1 row writes with indexes if both
+  ran; NFL alone is ~18k. Later runs write only changed rows.
+- **CFB has its own switch:** the workflow's `cfb` job now also requires
+  `vars.EPA_CFB_ENABLED == 'true'`. Public CFB EPA stays gated on the
+  attribution/data-terms review, and the read routes are public, so leave it
+  unset until that review is done. The one CFB validation game above is
+  readable publicly; nothing links to it.
+- **Zach-side, GitHub → Settings → Secrets and variables → Actions:** secret
+  `EPA_IMPORT_TOKEN` (from the file), variables `EPA_API_BASE =
+  https://fixtura-api.fixturaapp.workers.dev` and `EPA_INGEST_ENABLED = true`.
+  The schedule is 11:30 UTC daily.
+
 **Exact next task:** confirm the first cron run that rechecks a game logs
 `changed` counts in the low single digits (Workers Logs is enabled), then watch
 Sunday 2026-09-27's D1 rows-written stay under 100k. After that, the rest of
